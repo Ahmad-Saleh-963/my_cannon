@@ -44,6 +44,9 @@ class CannonViewModel : ViewModel() {
     // نقاط العلام
     val referencePoints = mutableStateListOf<ReferencePoint>()
 
+    // معطيات الرمي (الباليستية)
+    var ballisticParams by mutableStateOf(BallisticParams())
+
     // نوع النقطة التي يتم اختيارها حالياً من الخريطة
     var selectedPointType by mutableStateOf(PointType.NONE)
 

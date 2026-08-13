@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -39,6 +40,7 @@ import com.example.my_cannon.ui.components.CoordinateInputDialog
 import com.example.my_cannon.ui.components.MapViewContainer
 import com.example.my_cannon.ui.components.ResultsDashboard
 import com.example.my_cannon.ui.screens.TacticalGeometryScreen
+import com.example.my_cannon.ui.screens.CannonSimulationScreen
 import com.example.my_cannon.ui.theme.My_cannonTheme
 import com.example.my_cannon.ui.viewmodel.CannonViewModel
 import com.example.my_cannon.data.model.CannonPosition
@@ -73,6 +75,11 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
 
     var selectedTab by remember { mutableIntStateOf(0) }
     
+    // التعامل مع زر الرجوع في النظام لمنع إغلاق التطبيق فجأة
+    BackHandler(enabled = selectedTab != 0) {
+        selectedTab = 0 // العودة دائماً إلى شاشة الخريطة بدلاً من الخروج
+    }
+    
     // Hoisted Map State - initialized from cache if available
     val initialLoc = remember { viewModel.getLastLocation() }
     val mapViewportState = rememberMapViewportState {
@@ -106,42 +113,54 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
 
     Scaffold(
         bottomBar = {
-            NavigationBar(
-                containerColor = Color.Black.copy(alpha = 0.5f), // نصف شفافة لتناسب وضع الشاشة الكاملة
-                contentColor = Color.White
-            ) {
-                NavigationBarItem(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = { Icon(Icons.Default.Map, contentDescription = null) },
-                    label = { Text("الخريطة") },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color.Green,
-                        unselectedIconColor = Color.Gray,
-                        selectedTextColor = Color.Green,
-                        indicatorColor = Color.DarkGray
+            if (selectedTab != 3) {
+                NavigationBar(
+                    containerColor = Color.Black.copy(alpha = 0.5f), // نصف شفافة لتناسب وضع الشاشة الكاملة
+                    contentColor = Color.White
+                ) {
+                    NavigationBarItem(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        icon = { Icon(Icons.Default.Map, contentDescription = null) },
+                        label = { Text("الخريطة") },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color.Green,
+                            unselectedIconColor = Color.Gray,
+                            selectedTextColor = Color.Green,
+                            indicatorColor = Color.DarkGray
+                        )
                     )
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = { Icon(Icons.Default.Calculate, contentDescription = null) },
-                    label = { Text("الحسابات") },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color.Red,
-                        indicatorColor = Color.DarkGray
+                    NavigationBarItem(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        icon = { Icon(Icons.Default.Calculate, contentDescription = null) },
+                        label = { Text("الحسابات") },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color.Red,
+                            indicatorColor = Color.DarkGray
+                        )
                     )
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    icon = { Icon(Icons.Default.Timeline, contentDescription = null) },
-                    label = { Text("تكتيكي") },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color.Blue,
-                        indicatorColor = Color.DarkGray
+                    NavigationBarItem(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        icon = { Icon(Icons.Default.Timeline, contentDescription = null) },
+                        label = { Text("تكتيكي") },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color.Blue,
+                            indicatorColor = Color.DarkGray
+                        )
                     )
-                )
+                    NavigationBarItem(
+                        selected = selectedTab == 3,
+                        onClick = { selectedTab = 3 },
+                        icon = { Icon(Icons.Default.SportsEsports, contentDescription = null) },
+                        label = { Text("المحاكي") },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color.Cyan,
+                            indicatorColor = Color.DarkGray
+                        )
+                    )
+                }
             }
         }
     ) { innerPadding ->
@@ -154,13 +173,15 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
                     locationPermissionGranted = locationPermissionGranted,
                     modifier = Modifier.fillMaxSize()
                 )
+            } else if (selectedTab == 3) {
+                // المحاكي يأخذ كامل الشاشة
+                CannonSimulationScreen(onExit = { selectedTab = 0 })
             } else {
                 // الشاشات الأخرى تلتزم بالبادينج
                 Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-                    if (selectedTab == 1) {
-                        ResultsScreen(viewModel)
-                    } else {
-                        TacticalGeometryScreen(viewModel)
+                    when (selectedTab) {
+                        1 -> ResultsScreen(viewModel)
+                        2 -> TacticalGeometryScreen(viewModel)
                     }
                 }
             }
