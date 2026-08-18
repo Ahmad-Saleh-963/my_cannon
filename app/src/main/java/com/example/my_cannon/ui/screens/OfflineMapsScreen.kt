@@ -1,6 +1,8 @@
 package com.example.my_cannon.ui.screens
 
-import androidx.compose.animation.*
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -42,13 +44,28 @@ fun OfflineMapsScreen(
         }
     }
 
+    // متصفح الملفات للاستيراد
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.importMapFromFolder(it.toString()) }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("تحميل الخرائط (Offline)", fontWeight = FontWeight.Bold) },
+                title = { Text("خرائط الميدان", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع")
+                    }
+                },
+                actions = {
+                    // زر الاستيراد الاحترافي
+                    TextButton(onClick = { importLauncher.launch(null) }) {
+                        Icon(Icons.Default.UploadFile, contentDescription = null, tint = Color.Cyan)
+                        Spacer(Modifier.width(4.dp))
+                        Text("استيراد", color = Color.Cyan)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

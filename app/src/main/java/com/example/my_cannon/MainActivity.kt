@@ -101,7 +101,7 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
     var isSearchBarVisible by remember { mutableStateOf(false) }
 
     val searchQuery by offlineViewModel.searchQuery.collectAsState()
-    val searchResults by offlineViewModel.searchResults.collectAsState()
+    val searchResults by offlineViewModel.proResults.collectAsState() // استخدام النتائج الجديدة
     val isSearching by offlineViewModel.isSearching.collectAsState()
     val routeGeometry by offlineViewModel.currentRoute.collectAsState()
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -267,7 +267,10 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                             ) {
                                 TextField(
                                     value = searchQuery,
-                                    onValueChange = { offlineViewModel.onSearchQueryChanged(it) },
+                                    onValueChange = { 
+                                        val currentPoint = viewModel.getLastLocation()?.let { Point.fromLngLat(it.second, it.first) }
+                                        offlineViewModel.onSearchQueryChanged(it, currentPoint) 
+                                    },
                                     placeholder = { Text("بحث عن منطقة...", color = Color.Gray, fontSize = 14.sp) },
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = TextFieldDefaults.colors(
@@ -306,25 +309,23 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                                     keyboardActions = KeyboardActions(
                                         onSearch = {
                                             if (searchResults.isNotEmpty()) {
-                                                val (name, point) = searchResults.first()
-                                                destinationPoint = point
-                                                offlineViewModel.onSearchQueryChanged(name)
+                                                val result = searchResults.first()
+                                                destinationPoint = result.point
+                                                offlineViewModel.onSearchQueryChanged(result.name)
                                                 mapViewportState.setCameraOptions {
-                                                    center(point)
+                                                    center(result.point)
                                                     zoom(14.0)
                                                 }
-                                                // تحديد نقطة البداية من موقع الـ GPS الحالي
                                                 val currentLoc = viewModel.getLastLocation()
                                                 val start = if (currentLoc != null) {
-                                                    com.mapbox.geojson.Point.fromLngLat(currentLoc.second, currentLoc.first)
+                                                    Point.fromLngLat(currentLoc.second, currentLoc.first)
                                                 } else {
                                                     viewModel.cannonPos?.geoPoint?.let { 
-                                                        com.mapbox.geojson.Point.fromLngLat(it.longitude, it.latitude) 
-                                                    } ?: com.mapbox.geojson.Point.fromLngLat(36.2765, 33.5138)
+                                                        Point.fromLngLat(it.longitude, it.latitude) 
+                                                    } ?: Point.fromLngLat(36.2765, 33.5138)
                                                 }
-                                                offlineViewModel.calculateDrivingRoute(start, point)
+                                                offlineViewModel.calculateDrivingRoute(start, result.point)
                                                 
-                                                // إغلاق الكيبورد والشريط بعد إتمام العملية بنجاح
                                                 keyboardController?.hide()
                                                 isSearchBarVisible = false
                                             }
@@ -341,34 +342,41 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                                     shape = RoundedCornerShape(16.dp)
                                 ) {
                                     Column {
-                                        searchResults.forEach { (name, point) ->
+                                        searchResults.forEach { result ->
                                             ListItem(
-                                                headlineContent = { Text(name, color = Color.White) },
+                                                headlineContent = { 
+                                                    Text(result.name, color = Color.White, fontWeight = FontWeight.Bold) 
+                                                },
+                                                supportingContent = {
+                                                    Column {
+                                                        Text(result.province, color = Color.Cyan, fontSize = 10.sp)
+                                                        Text(result.fullAddress, color = Color.Gray, fontSize = 11.sp, maxLines = 1)
+                                                    }
+                                                },
                                                 leadingContent = { Icon(Icons.Default.LocationOn, contentDescription = null, tint = Color.Red) },
                                                 modifier = Modifier.combinedClickable(
                                                     onClick = {
-                                                        destinationPoint = point
-                                                        offlineViewModel.onSearchQueryChanged(name)
+                                                        destinationPoint = result.point
+                                                        offlineViewModel.onSearchQueryChanged(result.name)
                                                         mapViewportState.setCameraOptions {
-                                                            center(point)
+                                                            center(result.point)
                                                             zoom(14.0)
                                                         }
-                                                        // تحديد نقطة البداية من موقع الـ GPS الحالي
                                                         val currentLoc = viewModel.getLastLocation()
                                                         val start = if (currentLoc != null) {
-                                                            com.mapbox.geojson.Point.fromLngLat(currentLoc.second, currentLoc.first)
+                                                            Point.fromLngLat(currentLoc.second, currentLoc.first)
                                                         } else {
                                                             viewModel.cannonPos?.geoPoint?.let { 
-                                                                com.mapbox.geojson.Point.fromLngLat(it.longitude, it.latitude) 
-                                                            } ?: com.mapbox.geojson.Point.fromLngLat(36.2765, 33.5138)
+                                                                Point.fromLngLat(it.longitude, it.latitude) 
+                                                            } ?: Point.fromLngLat(36.2765, 33.5138)
                                                         }
-                                                        offlineViewModel.calculateDrivingRoute(start, point)
+                                                        offlineViewModel.calculateDrivingRoute(start, result.point)
                                                         isSearchBarVisible = false
                                                     }
                                                 ),
                                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                                             )
-                                            HorizontalDivider(color = Color.DarkGray.copy(alpha = 0.5f))
+                                            HorizontalDivider(color = Color.DarkGray.copy(alpha = 0.3f))
                                         }
                                     }
                                 }
