@@ -154,7 +154,7 @@ fun CannonSimulationScreen(onExit: () -> Unit, viewModel: CannonViewModel = view
             animCannonX, animCannonY,
             animTargetX, animTargetY
         )
-        
+
         // Connection Line
         ConnectionLine(animCannonX, animCannonY, animTargetX, animTargetY)
 
@@ -200,7 +200,7 @@ fun CannonSimulationScreen(onExit: () -> Unit, viewModel: CannonViewModel = view
 
         // FIRE BUTTON (Action)
         Button(
-            onClick = { 
+            onClick = {
                 if (!isFiring) {
                     isFiring = true
                 }
@@ -231,38 +231,38 @@ fun CannonSimulationScreen(onExit: () -> Unit, viewModel: CannonViewModel = view
             val startY = cannonHeight
             val endX = targetDist
             val endY = targetHeight
-            
+
             val duration = 4000L // 4 seconds flight for better visibility
             val startTime = System.currentTimeMillis()
-            
+
             smokeTrail.clear()
             showExplosion = false
 
             while (System.currentTimeMillis() - startTime < duration) {
                 val progress = (System.currentTimeMillis() - startTime).toFloat() / duration
-                
+
                 // Ballistic Trajectory (Parabolic) - Keep inside 3000m ceiling
                 val currentX = startX + (endX - startX) * progress
                 val dist = Math.abs(endX - startX)
                 val peakHeight = (dist * 0.15f).coerceAtMost(1500f) // Dynamic peak, max 1500m extra
-                
+
                 val currentY = startY + (endY - startY) * progress + (peakHeight * 4 * progress * (1 - progress))
-                
+
                 // Calculate Angle
                 val nextProgress = (progress + 0.005f).coerceAtMost(1f)
                 val nextX = startX + (endX - startX) * nextProgress
                 val nextY = startY + (endY - startY) * nextProgress + (peakHeight * 4 * nextProgress * (1 - nextProgress))
-                
+
                 missileX = currentX
                 missileY = currentY
                 missileAngle = Math.toDegrees(Math.atan2((nextY - currentY).toDouble(), (nextX - currentX).toDouble())).toFloat()
-                
+
                 flameScale = if (progress < 0.25f) (1f - progress / 0.25f) else 0f
                 smokeTrail.add(Offset(currentX, currentY))
-                
+
                 kotlinx.coroutines.delay(16)
             }
-            
+
             isFiring = false
             showExplosion = true
             kotlinx.coroutines.delay(1000)
@@ -274,9 +274,9 @@ fun CannonSimulationScreen(onExit: () -> Unit, viewModel: CannonViewModel = view
         BallisticSettingsDialog(
             params = viewModel.ballisticParams,
             onDismiss = { showBallisticDialog = false },
-            onConfirm = { 
+            onConfirm = {
                 viewModel.ballisticParams = it
-                showBallisticDialog = false 
+                showBallisticDialog = false
             }
         )
     }
@@ -497,7 +497,7 @@ fun DrawScope.drawTrajectoryPreview(sX: Float, sY: Float, eX: Float, eY: Float) 
         val peak = (dist * 0.15f).coerceAtMost(1500f)
 
         moveTo((sX / 50000f) * w, h - (sY / 3000f) * (h * 0.8f) - 60.dp.toPx())
-        
+
         for (i in 1..20) {
             val p = i / 20f
             val curX = sX + (eX - sX) * p
@@ -542,7 +542,7 @@ fun SimulationHUD(cDist: Float, cHeight: Float, tDist: Float, tHeight: Float) {
             Spacer(modifier = Modifier.width(4.dp))
             Icon(Icons.Default.TrackChanges, contentDescription = null, tint = Color.Red, modifier = Modifier.size(14.dp))
         }
-        
+
         // Calculated Info
         val directDist = sqrt((tDist - cDist).let { it * it } + (tHeight - cHeight).let { it * it })
         Surface(
@@ -596,7 +596,7 @@ fun TacticalObject(dist: Float, height: Float, isCannon: Boolean, color: Color) 
             drawLine(color, Offset(xPos, yPos - 12.dp.toPx()), Offset(xPos, yPos + 12.dp.toPx()), strokeWidth = 2.5.dp.toPx())
             drawCircle(color, radius = 7.dp.toPx(), center = Offset(xPos, yPos), style = Stroke(width = 2.dp.toPx()))
         }
-        
+
         // Tactical Indicator Line
         drawLine(
             color = color.copy(alpha = 0.4f),
@@ -647,7 +647,7 @@ fun MissileVisual(x: Float, y: Float, angle: Float, flameScale: Float, smokeTrai
                 },
                 color = Color.Red
             )
-            
+
             // Engine Flame
             if (flameScale > 0) {
                 drawPath(

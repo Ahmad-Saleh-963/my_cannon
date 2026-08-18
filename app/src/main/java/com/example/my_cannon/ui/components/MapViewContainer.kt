@@ -1,7 +1,7 @@
+@file:Suppress("COMPOSE_APPLIER_CALL_MISMATCH")
+
 package com.example.my_cannon.ui.components
 
-import android.Manifest
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -17,12 +17,10 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import com.example.my_cannon.ui.viewmodel.CannonViewModel
 import com.mapbox.geojson.Point
 import com.mapbox.maps.MapboxExperimental
@@ -34,7 +32,8 @@ import com.mapbox.maps.extension.compose.annotation.generated.PointAnnotation
 import com.mapbox.maps.extension.compose.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.extension.compose.style.MapStyle
 import com.mapbox.maps.extension.style.layers.properties.generated.IconAnchor
-import com.mapbox.maps.plugin.LocationPuck2D
+import com.mapbox.maps.extension.style.layers.generated.SymbolLayer
+import com.mapbox.maps.extension.style.layers.getLayerAs
 import com.mapbox.maps.plugin.PuckBearing
 import com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck
 import com.mapbox.maps.plugin.locationcomponent.location
@@ -79,6 +78,23 @@ fun MapViewContainer(
             }
         ) {
             MapEffect(locationPermissionGranted) { mapView ->
+                mapView.mapboxMap.subscribeStyleLoaded {
+                    mapView.mapboxMap.getStyle { style ->
+                        try {
+                            style.styleLayers.forEach { layer ->
+                                style.getLayerAs<SymbolLayer>(layer.id)?.textField(
+                                    com.mapbox.maps.extension.style.expressions.generated.Expression.coalesce(
+                                        com.mapbox.maps.extension.style.expressions.generated.Expression.get("name_ar"),
+                                        com.mapbox.maps.extension.style.expressions.generated.Expression.get("name")
+                                    )
+                                )
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                }
+
                 mapView.location.updateSettings {
                     enabled = locationPermissionGranted
                     puckBearingEnabled = true
@@ -149,8 +165,6 @@ fun MapViewContainer(
                 }
             }
         }
-
-        // تسميات الجهات الأربع (N, S, E, W) للتوجيه الاحترافي
         CardinalDirectionsOverlay()
     }
 }

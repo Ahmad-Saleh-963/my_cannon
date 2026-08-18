@@ -52,10 +52,8 @@ import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportS
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
         // إبقاء الشاشة مضيئة دائماً أثناء عمل التطبيق
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        
         enableEdgeToEdge()
         setContent {
             My_cannonTheme {
@@ -74,12 +72,12 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
     }
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    
+
     // التعامل مع زر الرجوع في النظام لمنع إغلاق التطبيق فجأة
     BackHandler(enabled = selectedTab != 0) {
-        selectedTab = 0 // العودة دائماً إلى شاشة الخريطة بدلاً من الخروج
+        selectedTab = 0
     }
-    
+
     // Hoisted Map State - initialized from cache if available
     val initialLoc = remember { viewModel.getLastLocation() }
     val mapViewportState = rememberMapViewportState {
@@ -112,11 +110,13 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
     }
 
     Scaffold(
+        modifier = Modifier.fillMaxSize(),
         bottomBar = {
             if (selectedTab != 3) {
                 NavigationBar(
-                    containerColor = Color.Black.copy(alpha = 0.5f), // نصف شفافة لتناسب وضع الشاشة الكاملة
-                    contentColor = Color.White
+                    containerColor = Color.Black.copy(alpha = 0.7f), // جعلها أكثر وضوحاً قليلاً
+                    contentColor = Color.White,
+                    modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars) // التأكد من عدم التداخل مع شريط التنقل
                 ) {
                     NavigationBarItem(
                         selected = selectedTab == 0,
@@ -165,61 +165,71 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
         }
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize()) {
-            if (selectedTab == 0) {
-                // الخريطة تأخذ كامل الشاشة بدون بادينج
-                MapViewContainer(
-                    viewModel = viewModel,
-                    mapViewportState = mapViewportState,
-                    locationPermissionGranted = locationPermissionGranted,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else if (selectedTab == 3) {
-                // المحاكي يأخذ كامل الشاشة
-                CannonSimulationScreen(onExit = { selectedTab = 0 })
-            } else {
-                // الشاشات الأخرى تلتزم بالبادينج
-                Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-                    when (selectedTab) {
-                        1 -> ResultsScreen(viewModel)
-                        2 -> TacticalGeometryScreen(viewModel)
+            when (selectedTab) {
+                0 -> {
+                    // الخريطة تأخذ كامل الشاشة
+                    MapViewContainer(
+                        viewModel = viewModel,
+                        mapViewportState = mapViewportState,
+                        locationPermissionGranted = locationPermissionGranted,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                3 -> {
+                    // المحاكي يأخذ كامل الشاشة
+                    CannonSimulationScreen(onExit = { selectedTab = 0 })
+                }
+                else -> {
+                    // الشاشات الأخرى تلتزم بالبادينج
+                    Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+                        when (selectedTab) {
+                            1 -> ResultsScreen(viewModel)
+                            2 -> TacticalGeometryScreen(viewModel)
+                        }
                     }
                 }
             }
 
-            // أزرار الخريطة الاحترافية (فقط في تبويب الخريطة)
-            if (selectedTab == 0) {
-                // 1. زر GPS في أسفل اليسار (مقابل زر الإضافة)
-                SmallFloatingActionButton(
-                    onClick = {
-                        if (locationPermissionGranted) {
-                            mapViewportState.transitionToFollowPuckState()
-                        } else {
-                            launcher.launch(
-                                arrayOf(
-                                    Manifest.permission.ACCESS_FINE_LOCATION,
-                                    Manifest.permission.ACCESS_COARSE_LOCATION
+            // أزرار الخريطة والتحكم - استخدام safeDrawingPadding لضمان عدم التداخل مع النظام
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .safeDrawingPadding() // هذا السحر يمنع التداخل مع الساعة وأزرار النظام
+            ) {
+                if (selectedTab == 0) {
+                    // 1. زر GPS في أسفل اليسار
+                    SmallFloatingActionButton(
+                        onClick = {
+                            if (locationPermissionGranted) {
+                                mapViewportState.transitionToFollowPuckState()
+                            } else {
+                                launcher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                    )
                                 )
-                            )
-                        }
-                    },
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(bottom = 100.dp, start = 16.dp), // فوق شريط التنقل
-                    containerColor = Color.Black.copy(alpha = 0.7f),
-                    contentColor = if (locationPermissionGranted) Color.Cyan else Color.Gray,
-                    shape = CircleShape
-                ) {
-                    Icon(Icons.Default.MyLocation, contentDescription = "تحديد موقعي")
-                }
+                            }
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(start = 16.dp, bottom = 80.dp), // فوق شريط التنقل الداخلي
+                        containerColor = Color.Black.copy(alpha = 0.7f),
+                        contentColor = if (locationPermissionGranted) Color.Cyan else Color.Gray,
+                        shape = CircleShape
+                    ) {
+                        Icon(Icons.Default.MyLocation, contentDescription = "تحديد موقعي")
+                    }
 
-                // 2. قائمة Speed Dial في أسفل اليمين
-                SpeedDialFab(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(bottom = 100.dp, end = 16.dp), // فوق شريط التنقل
-                    viewModel = viewModel,
-                    currentType = viewModel.selectedPointType
-                )
+                    // 2. قائمة Speed Dial في أسفل اليمين
+                    SpeedDialFab(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 16.dp, bottom = 80.dp), // فوق شريط التنقل الداخلي
+                        viewModel = viewModel,
+                        currentType = viewModel.selectedPointType
+                    )
+                }
             }
         }
 
