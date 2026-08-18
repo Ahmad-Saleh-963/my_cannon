@@ -1,13 +1,19 @@
 package com.example.my_cannon.ui.viewmodel
 
+import android.Manifest
 import android.app.Application
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.os.Build
 import android.os.Environment
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.my_cannon.R
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import com.mapbox.common.TileStore
 import com.mapbox.common.TileRegionLoadOptions
 import com.mapbox.geojson.BoundingBox
@@ -54,8 +60,25 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
     private val prefs = application.getSharedPreferences("map_download_prefs", Context.MODE_PRIVATE)
 
     private val mapRootPath: String by lazy {
-        val folder = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "mymap")
-        if (!folder.exists()) folder.mkdirs()
+        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        // التأكد من وجود مجلد Download نفسه (لبعض الأنظمة المخصصة)
+        if (!downloads.exists()) {
+            try {
+                downloads.mkdirs()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        
+        val folder = File(downloads, "mymap")
+        if (!folder.exists()) {
+            try {
+                folder.mkdirs()
+            } catch (e: Exception) {
+                // إذا فشل في المجلد العام، نستخدم المجلد الخاص بالتطبيق كخيار احتياطي لضمان العمل
+                return@lazy application.getExternalFilesDir(null)?.absolutePath ?: application.filesDir.absolutePath
+            }
+        }
         folder.absolutePath
     }
 
@@ -64,6 +87,9 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _provinces = MutableStateFlow<List<ProvinceOfflineState>>(emptyList())
     val provinces: StateFlow<List<ProvinceOfflineState>> = _provinces.asStateFlow()
+
+    private val _autoDownloadEnabled = MutableStateFlow(prefs.getBoolean("auto_download", false))
+    val autoDownloadEnabled: StateFlow<Boolean> = _autoDownloadEnabled.asStateFlow()
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -112,6 +138,44 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
         )
     }
 
+    fun toggleAutoDownload(enabled: Boolean) {
+        _autoDownloadEnabled.value = enabled
+        prefs.edit().putBoolean("auto_download", enabled).apply()
+        if (enabled) {
+            startSmartAutoDownload()
+        }
+    }
+
+    private fun startSmartAutoDownload() {
+        if (ContextCompat.checkSelfPermission(getApplication(), Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+
+        val fusedLocationClient = LocationServices.getFusedLocationProviderClient(getApplication<Application>())
+        
+        try {
+            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+                val targetLoc = location ?: android.location.Location("").apply { 
+                    latitude = 33.5138; longitude = 36.2765 // دمشق كخيار احتياطي
+                }
+                
+                val intent = android.content.Intent(getApplication(), com.example.my_cannon.service.MapDownloadService::class.java).apply {
+                    putExtra("MODE", "SMART_AUTO")
+                    putExtra("LAT", targetLoc.latitude)
+                    putExtra("LON", targetLoc.longitude)
+                    putExtra("ROOT_PATH", mapRootPath)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    getApplication<Application>().startForegroundService(intent)
+                } else {
+                    getApplication<Application>().startService(intent)
+                }
+            }
+        } catch (e: SecurityException) {
+            e.printStackTrace()
+        }
+    }
+
     fun refreshDownloadedStates() {
         tileStore.getAllTileRegions { expected ->
             if (expected.isValue) {
@@ -129,10 +193,9 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun checkAndResumeDownloads() {
         _provinces.value.forEach { province ->
-            if (province.isDownloading) {
-                resumeDownload(province.name)
-            }
+            if (province.isDownloading) resumeDownload(province.name)
         }
+        if (_autoDownloadEnabled.value) startSmartAutoDownload()
     }
 
     private var lastResourceSizeMap = mutableMapOf<String, Long>()
@@ -198,14 +261,7 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
                 val sizeMB = String.format(Locale.US, "%.1f MB", progress.completedResourceSize / (1024.0 * 1024.0))
 
                 updateProvinceState(provinceName) { 
-                    it.copy(
-                        progress = p, 
-                        completedResources = progress.completedResourceCount,
-                        totalResources = progress.requiredResourceCount,
-                        size = sizeMB,
-                        speed = speedStr,
-                        status = "جاري المزامنة..." 
-                    ) 
+                    it.copy(progress = p, completedResources = progress.completedResourceCount, totalResources = progress.requiredResourceCount, size = sizeMB, speed = speedStr, status = "جاري المزامنة...") 
                 }
             },
             { expected ->
@@ -250,7 +306,7 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun isOnline(): Boolean {
-        val connectivityManager = getApplication<Application>().getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val connectivityManager = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val network = connectivityManager.activeNetwork ?: return false
         val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)

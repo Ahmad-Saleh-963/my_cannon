@@ -38,20 +38,25 @@ class MapDownloadService : Service() {
     override fun onCreate() {
         super.onCreate()
         
-        // 1. تفعيل الـ WakeLock لمنع المعالج من الخمول (Full Power CPU)
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MyCannon:DownloadWakeLock")
-        wakeLock?.acquire()
+        wakeLock?.acquire(10 * 60 * 1000L)
 
-        // 2. تفعيل الـ WifiLock لضمان أقصى سرعة للـ Wifi وعدم الدخول في وضع توفير الطاقة
         val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        @Suppress("DEPRECATION")
         wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "MyCannon:WifiLock")
         wifiLock?.acquire()
 
-        // 3. طلب أولوية عالية للشبكة من النظام
         requestHighPriorityNetwork()
 
-        val path = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "mymap").absolutePath
+        // إنشاء المسار باحترافية مع معالجة احتمالية عدم وجود المجلد الرئيسي
+        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        if (!downloads.exists()) downloads.mkdirs()
+        val folder = File(downloads, "mymap")
+        if (!folder.exists()) folder.mkdirs()
+        
+        val path = if (folder.exists()) folder.absolutePath else getExternalFilesDir(null)?.absolutePath ?: filesDir.absolutePath
+        
         tileStore = TileStore.create(path)
         offlineManager = OfflineManager()
         createNotificationChannel()
@@ -61,34 +66,56 @@ class MapDownloadService : Service() {
         val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val request = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
             .build()
         
-        connectivityManager.requestNetwork(request, object : ConnectivityManager.NetworkCallback() {
-            // النظام سيعطي الأولوية لهذا الطلب لضمان استقرار وسرعة الاتصال
-        })
+        connectivityManager.requestNetwork(request, object : ConnectivityManager.NetworkCallback() {})
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val provinceName = intent?.getStringExtra("PROVINCE_NAME") ?: return START_NOT_STICKY
-        val west = intent.getDoubleExtra("WEST", 0.0)
-        val south = intent.getDoubleExtra("SOUTH", 0.0)
-        val east = intent.getDoubleExtra("EAST", 0.0)
-        val north = intent.getDoubleExtra("NORTH", 0.0)
-
-        // تفعيل وضع "الأولوية المطلقة" (Foreground Service Priority)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, createNotification(provinceName, 0), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIFICATION_ID, createNotification(provinceName, 0))
-        }
+        val mode = intent?.getStringExtra("MODE") ?: "SINGLE"
         
-        downloadMap(provinceName, west, south, east, north)
+        if (mode == "SMART_AUTO") {
+            val lat = intent?.getDoubleExtra("LAT", 0.0) ?: 0.0
+            val lon = intent?.getDoubleExtra("LON", 0.0) ?: 0.0
+            if (lat != 0.0 && lon != 0.0) {
+                startForegroundNotification("الجاهزية التلقائية")
+                startSmartAutoDownload(lat, lon)
+            } else {
+                stopSelf()
+            }
+        } else {
+            val provinceName = intent?.getStringExtra("PROVINCE_NAME") ?: return START_NOT_STICKY
+            val w = intent.getDoubleExtra("WEST", 0.0)
+            val s = intent.getDoubleExtra("SOUTH", 0.0)
+            val e = intent.getDoubleExtra("EAST", 0.0)
+            val n = intent.getDoubleExtra("NORTH", 0.0)
+            
+            startForegroundNotification("تحميل: $provinceName")
+            downloadMap(provinceName, w, s, e, n, 14)
+        }
         
         return START_STICKY
     }
 
-    private fun downloadMap(name: String, w: Double, s: Double, e: Double, n: Double) {
+    private fun startSmartAutoDownload(lat: Double, lon: Double) {
+        // 1. تحميل النطاق الحالي (10 كم)
+        val offset = 0.1
+        downloadMap("MyArea", lon - offset, lat - offset, lon + offset, lat + offset, 14)
+        
+        // 2. تحميل سوريا كاملة (زوم منخفض)
+        downloadMap("SyriaLow", 35.0, 32.0, 42.5, 37.5, 10)
+    }
+
+    private fun startForegroundNotification(title: String) {
+        val notification = createNotification(title, 0)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun downloadMap(name: String, w: Double, s: Double, e: Double, n: Double, maxZoom: Int) {
         val polygon = Polygon.fromLngLats(listOf(listOf(
             Point.fromLngLat(w, s), Point.fromLngLat(e, s),
             Point.fromLngLat(e, n), Point.fromLngLat(w, n), Point.fromLngLat(w, s)
@@ -98,7 +125,7 @@ class MapDownloadService : Service() {
             TilesetDescriptorOptions.Builder()
                 .styleURI("mapbox://styles/mapbox/satellite-streets-v12")
                 .minZoom(0)
-                .maxZoom(14)
+                .maxZoom(maxZoom.toByte())
                 .build()
         )
 
@@ -114,12 +141,8 @@ class MapDownloadService : Service() {
                 updateNotification(name, p)
             },
             { expected ->
-                if (expected.isError) {
-                    cleanupAndStop()
-                } else {
-                    updateNotification("$name - اكتمل التجميل", 100)
-                    cleanupAndStop()
-                }
+                if (expected.isError && name != "MyArea") cleanupAndStop()
+                // if it's smart auto, we keep going for other regions
             }
         )
     }
@@ -133,27 +156,26 @@ class MapDownloadService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "تحميل الخرائط توربو", NotificationManager.IMPORTANCE_HIGH)
-            val manager = getSystemService(NotificationManager::class.java)
+            val channel = NotificationChannel(CHANNEL_ID, "مزامنة الخرائط", NotificationManager.IMPORTANCE_LOW)
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
         }
     }
 
-    private fun createNotification(name: String, progress: Int): Notification {
+    private fun createNotification(title: String, progress: Int): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("وضع الأولوية القصوى: $name")
-            .setContentText("يتم الآن سحب كامل سرعة النت المتوفرة... $progress%")
+            .setContentTitle(title)
+            .setContentText("جاري تحديث الخرائط الميدانية... $progress%")
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setProgress(100, progress, false)
             .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_MAX) // أعلى أولوية معالجة
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
             .build()
     }
 
     private fun updateNotification(name: String, progress: Int) {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, createNotification(name, progress))
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, createNotification("تحديث: $name", progress))
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
