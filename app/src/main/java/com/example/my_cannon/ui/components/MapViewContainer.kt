@@ -51,7 +51,7 @@ fun MapViewContainer(
     val targetBitmap = rememberIconBitmap(Icons.Default.TrackChanges, Color.Red)
     val refBitmap = rememberIconBitmap(Icons.Default.Flag, Color.Blue)
 
-    // التركيز التلقائي على الموقع عند الفتح إذا كانت الصلاحية ممنوحة
+    // التركيز الفوري على الموقع عند أول ظهور للنقطة الزرقاء
     LaunchedEffect(locationPermissionGranted) {
         if (locationPermissionGranted) {
             mapViewportState.transitionToFollowPuckState()
@@ -103,8 +103,19 @@ fun MapViewContainer(
                     showAccuracyRing = true
                 }
                 
-                // حفظ الموقع الأخير في الكاش
+                // حفظ الموقع الأخير وحل مشكلة الانتقال الفوري
+                var firstFix = true
                 mapView.location.addOnIndicatorPositionChangedListener { point ->
+                    if (firstFix && locationPermissionGranted) {
+                        // إذا كان الفتح لأول مرة، نضبط الكاميرا فوراً بدون أنيميشن
+                        if (viewModel.getLastLocation() == null) {
+                            mapViewportState.setCameraOptions {
+                                center(point)
+                                zoom(14.0)
+                            }
+                        }
+                        firstFix = false
+                    }
                     viewModel.saveLastLocation(point.latitude(), point.longitude())
                 }
             }

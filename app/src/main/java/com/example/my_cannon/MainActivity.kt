@@ -1,14 +1,20 @@
 package com.example.my_cannon
 
 import android.Manifest
+import android.app.Activity
+import android.content.IntentSender
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
@@ -30,6 +36,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.seconds
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -46,6 +56,8 @@ import com.example.my_cannon.ui.viewmodel.CannonViewModel
 import com.example.my_cannon.data.model.CannonPosition
 import com.example.my_cannon.data.model.TargetPosition
 import com.example.my_cannon.data.model.ReferencePoint
+import com.google.android.gms.common.api.ResolvableApiException
+import com.google.android.gms.location.*
 import com.mapbox.geojson.Point
 import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportState
 
@@ -54,6 +66,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // إبقاء الشاشة مضيئة دائماً أثناء عمل التطبيق
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        
+        // إخفاء أشرطة النظام (الحالة والتنقل) للحصول على تجربة كاملة الشاشة
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+
         enableEdgeToEdge()
         setContent {
             My_cannonTheme {
@@ -72,6 +91,24 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
     }
 
     var selectedTab by remember { mutableIntStateOf(0) }
+    
+    // حالة ظهور شريط التنقل
+    var isBottomBarVisible by remember { mutableStateOf(false) }
+
+    // مؤقت لإخفاء الشريط تلقائياً بعد 3 ثوانٍ
+    LaunchedEffect(isBottomBarVisible) {
+        if (isBottomBarVisible) {
+            delay(3.seconds)
+            isBottomBarVisible = false
+        }
+    }
+
+    // Location Permission State
+    var locationPermissionGranted by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        )
+    }
 
     // التعامل مع زر الرجوع في النظام لمنع إغلاق التطبيق فجأة
     BackHandler(enabled = selectedTab != 0) {
@@ -92,11 +129,39 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
         }
     }
 
-    // Location Permission State
-    var locationPermissionGranted by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        )
+    // حالة حوار تفعيل الـ GPS
+    var showLocationDisabledDialog by remember { mutableStateOf(false) }
+    var resolvableException by remember { mutableStateOf<ResolvableApiException?>(null) }
+
+    val settingResultLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            // جلب الموقع والحفظ فور التفعيل
+            fetchAndSaveLocation(context, viewModel, mapViewportState)
+        }
+    }
+
+    fun checkAndEnableGPS() {
+        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000).build()
+        val builder = LocationSettingsRequest.Builder()
+            .addLocationRequest(locationRequest)
+            .setAlwaysShow(true)
+        
+        val client: SettingsClient = LocationServices.getSettingsClient(context)
+        val task = client.checkLocationSettings(builder.build())
+
+        task.addOnSuccessListener {
+            // إذا كان مفعل مسبقاً، ننتقل فوراً
+            fetchAndSaveLocation(context, viewModel, mapViewportState)
+        }
+
+        task.addOnFailureListener { exception ->
+            if (exception is ResolvableApiException) {
+                resolvableException = exception
+                showLocationDisabledDialog = true
+            }
+        }
     }
 
     val launcher = rememberLauncherForActivityResult(
@@ -105,69 +170,21 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
         locationPermissionGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
                 permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
         if (locationPermissionGranted) {
-            mapViewportState.transitionToFollowPuckState()
+            checkAndEnableGPS()
         }
     }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
-            if (selectedTab != 3) {
-                NavigationBar(
-                    containerColor = Color.Black.copy(alpha = 0.7f), // جعلها أكثر وضوحاً قليلاً
-                    contentColor = Color.White,
-                    modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars) // التأكد من عدم التداخل مع شريط التنقل
-                ) {
-                    NavigationBarItem(
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
-                        icon = { Icon(Icons.Default.Map, contentDescription = null) },
-                        label = { Text("الخريطة") },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Color.Green,
-                            unselectedIconColor = Color.Gray,
-                            selectedTextColor = Color.Green,
-                            indicatorColor = Color.DarkGray
-                        )
-                    )
-                    NavigationBarItem(
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
-                        icon = { Icon(Icons.Default.Calculate, contentDescription = null) },
-                        label = { Text("الحسابات") },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Color.Red,
-                            indicatorColor = Color.DarkGray
-                        )
-                    )
-                    NavigationBarItem(
-                        selected = selectedTab == 2,
-                        onClick = { selectedTab = 2 },
-                        icon = { Icon(Icons.Default.Timeline, contentDescription = null) },
-                        label = { Text("تكتيكي") },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Color.Blue,
-                            indicatorColor = Color.DarkGray
-                        )
-                    )
-                    NavigationBarItem(
-                        selected = selectedTab == 3,
-                        onClick = { selectedTab = 3 },
-                        icon = { Icon(Icons.Default.SportsEsports, contentDescription = null) },
-                        label = { Text("المحاكي") },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Color.Cyan,
-                            indicatorColor = Color.DarkGray
-                        )
-                    )
-                }
-            }
+            // سنقوم برسم الشريط يدوياً داخل الـ Box ليكون عائماً ومتحركاً
         }
     ) { innerPadding ->
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier.fillMaxSize()
+        ) {
             when (selectedTab) {
                 0 -> {
-                    // الخريطة تأخذ كامل الشاشة
                     MapViewContainer(
                         viewModel = viewModel,
                         mapViewportState = mapViewportState,
@@ -176,15 +193,83 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
                     )
                 }
                 3 -> {
-                    // المحاكي يأخذ كامل الشاشة
                     CannonSimulationScreen(onExit = { selectedTab = 0 })
                 }
                 else -> {
-                    // الشاشات الأخرى تلتزم بالبادينج
                     Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
                         when (selectedTab) {
                             1 -> ResultsScreen(viewModel)
                             2 -> TacticalGeometryScreen(viewModel)
+                        }
+                    }
+                }
+            }
+
+            // منطقة حساسة للسحب في الأسفل فقط
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(60.dp) // ارتفاع كافٍ لاستشعار السحب من الأسفل
+                    .align(Alignment.BottomCenter)
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures { _, dragAmount ->
+                            if (dragAmount < -10) { // سحب للأعلى حصراً
+                                isBottomBarVisible = true
+                            }
+                        }
+                    }
+            )
+
+            // شريط التنقل العائم والمتحرك
+            AnimatedVisibility(
+                visible = isBottomBarVisible && selectedTab != 3,
+                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .padding(horizontal = 32.dp, vertical = 16.dp) // جعل الشريط يبدو ككبسولة طافية
+                        .height(52.dp)
+                        .fillMaxWidth(),
+                    shape = RoundedCornerShape(26.dp),
+                    color = Color.Black.copy(alpha = 0.8f),
+                    tonalElevation = 8.dp
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val items = listOf(
+                            Triple(0, Icons.Default.Map, "خريطة"),
+                            Triple(1, Icons.Default.Calculate, "حساب"),
+                            Triple(2, Icons.Default.Timeline, "تكتيك"),
+                            Triple(3, Icons.Default.SportsEsports, "محاكي")
+                        )
+
+                        items.forEach { (index, icon, _) ->
+                            val isSelected = selectedTab == index
+                            IconButton(
+                                onClick = { 
+                                    selectedTab = index
+                                    isBottomBarVisible = false // إخفاء بعد الاختيار
+                                }
+                            ) {
+                                Icon(
+                                    icon,
+                                    contentDescription = null,
+                                    tint = if (isSelected) {
+                                        when(index) {
+                                            0 -> Color.Green
+                                            1 -> Color.Red
+                                            2 -> Color.Blue
+                                            else -> Color.Cyan
+                                        }
+                                    } else Color.White.copy(alpha = 0.5f),
+                                    modifier = Modifier.size(if (isSelected) 28.dp else 24.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -201,7 +286,7 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
                     SmallFloatingActionButton(
                         onClick = {
                             if (locationPermissionGranted) {
-                                mapViewportState.transitionToFollowPuckState()
+                                checkAndEnableGPS()
                             } else {
                                 launcher.launch(
                                     arrayOf(
@@ -213,7 +298,7 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
                         },
                         modifier = Modifier
                             .align(Alignment.BottomStart)
-                            .padding(start = 16.dp, bottom = 80.dp), // فوق شريط التنقل الداخلي
+                            .padding(start = 16.dp, bottom = 64.dp), // مسافة أقل لتناسب الشريط الجديد
                         containerColor = Color.Black.copy(alpha = 0.7f),
                         contentColor = if (locationPermissionGranted) Color.Cyan else Color.Gray,
                         shape = CircleShape
@@ -225,7 +310,7 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
                     SpeedDialFab(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(end = 16.dp, bottom = 80.dp), // فوق شريط التنقل الداخلي
+                            .padding(end = 16.dp, bottom = 64.dp), // مسافة أقل لتناسب الشريط الجديد
                         viewModel = viewModel,
                         currentType = viewModel.selectedPointType
                     )
@@ -253,6 +338,80 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
                     onDismiss = { viewModel.showEditDialog = false }
                 )
             }
+        }
+
+        // حوار تنبيه خدمات الموقع معطلة
+        if (showLocationDisabledDialog) {
+            AlertDialog(
+                onDismissRequest = { 
+                    showLocationDisabledDialog = false
+                    resolvableException = null
+                },
+                title = { Text("خدمات الموقع معطلة") },
+                text = { Text("يرجى تفعيل خدمات الموقع (GPS) لتتمكن من تحديد موقعك بدقة على الخريطة.") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val exception = resolvableException
+                            if (exception != null) {
+                                try {
+                                    val intentSenderRequest = IntentSenderRequest.Builder(exception.resolution.intentSender).build()
+                                    settingResultLauncher.launch(intentSenderRequest)
+                                } catch (e: IntentSender.SendIntentException) {
+                                    e.printStackTrace()
+                                }
+                            }
+                            showLocationDisabledDialog = false
+                            resolvableException = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Cyan, contentColor = Color.Black)
+                    ) {
+                        Text("موافق")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { 
+                        showLocationDisabledDialog = false
+                        resolvableException = null
+                    }) {
+                        Text("إلغاء", color = Color.Gray)
+                    }
+                },
+                containerColor = Color.DarkGray,
+                titleContentColor = Color.White,
+                textContentColor = Color.White
+            )
+        }
+    }
+}
+
+/**
+ * وظيفة لجلب الموقع الحالي وحفظه وتحريك الكاميرا إليه فوراً
+ */
+private fun fetchAndSaveLocation(
+    context: android.content.Context, 
+    viewModel: CannonViewModel, 
+    mapViewportState: com.mapbox.maps.extension.compose.animation.viewport.MapViewportState
+) {
+    if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+        val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
+        try {
+            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+                location?.let {
+                    // 1. حفظ الموقع في الكاش
+                    viewModel.saveLastLocation(it.latitude, it.longitude)
+                    
+                    // 2. تحديث المربط تلقائياً إذا كان فارغاً
+                    if (viewModel.cannonPos == null) {
+                        viewModel.updatePointManually(com.example.my_cannon.data.model.GeoPoint(it.latitude, it.longitude))
+                    }
+                    
+                    // 3. تحريك الكاميرا فوراً للموقع
+                    mapViewportState.transitionToFollowPuckState()
+                }
+            }
+        } catch (e: SecurityException) {
+            e.printStackTrace()
         }
     }
 }

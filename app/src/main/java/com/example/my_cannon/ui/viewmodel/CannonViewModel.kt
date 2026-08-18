@@ -17,6 +17,26 @@ class CannonViewModel : ViewModel() {
 
     fun initPrefs(context: Context) {
         sharedPrefs = context.getSharedPreferences("cannon_prefs", Context.MODE_PRIVATE)
+        loadCannonPosition() // تحميل موقع المربط المحفوظ عند البدء
+    }
+
+    private fun loadCannonPosition() {
+        val lat = sharedPrefs?.getFloat("cannon_lat", -1f) ?: -1f
+        val lon = sharedPrefs?.getFloat("cannon_lon", -1f) ?: -1f
+        if (lat != -1f && lon != -1f) {
+            val geo = GeoPoint(lat.toDouble(), lon.toDouble())
+            val utm = UtmConverter.fromGeoToUtm(geo)
+            cannonPos = CannonPosition(geoPoint = geo, utmPoint = utm)
+            calculateAll()
+        }
+    }
+
+    fun saveCannonPosition(lat: Double, lon: Double) {
+        sharedPrefs?.edit()?.apply {
+            putFloat("cannon_lat", lat.toFloat())
+            putFloat("cannon_lon", lon.toFloat())
+            apply()
+        }
     }
 
     fun saveLastLocation(lat: Double, lon: Double) {
@@ -68,6 +88,7 @@ class CannonViewModel : ViewModel() {
         when (selectedPointType) {
             PointType.CANNON -> {
                 cannonPos = CannonPosition(geoPoint = geo, utmPoint = utm)
+                saveCannonPosition(lat, lon) // حفظ دائم
                 calculateAll()
             }
             PointType.TARGET -> {
@@ -145,6 +166,11 @@ class CannonViewModel : ViewModel() {
         targets.clear()
         referencePoints.clear()
         mainResult = null
+        sharedPrefs?.edit()?.apply {
+            remove("cannon_lat")
+            remove("cannon_lon")
+            apply()
+        }
     }
 
     fun removeTarget(target: TargetPosition) {
@@ -166,6 +192,7 @@ class CannonViewModel : ViewModel() {
             when (editingPoint) {
                 is CannonPosition -> {
                     cannonPos = CannonPosition(id = editingPoint.id, name = editingPoint.name, geoPoint = geo, utmPoint = utm)
+                    saveCannonPosition(geo.latitude, geo.longitude) // تحديث الحفظ
                     calculateAll()
                 }
                 is TargetPosition -> {
@@ -187,6 +214,7 @@ class CannonViewModel : ViewModel() {
             when (manualAddType) {
                 PointType.CANNON -> {
                     cannonPos = CannonPosition(geoPoint = geo, utmPoint = utm)
+                    saveCannonPosition(geo.latitude, geo.longitude) // تحديث الحفظ
                     calculateAll()
                 }
                 PointType.TARGET -> {
