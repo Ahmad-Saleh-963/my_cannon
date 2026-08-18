@@ -1,12 +1,14 @@
 package com.example.my_cannon.ui.screens
 
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import android.net.Uri
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -44,7 +46,6 @@ fun OfflineMapsScreen(
         }
     }
 
-    // متصفح الملفات للاستيراد
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
@@ -54,73 +55,60 @@ fun OfflineMapsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("خرائط الميدان", fontWeight = FontWeight.Bold) },
+                title = { Text("خرائط الميدان", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع")
                     }
                 },
                 actions = {
-                    // زر الاستيراد الاحترافي
                     TextButton(onClick = { importLauncher.launch(null) }) {
-                        Icon(Icons.Default.UploadFile, contentDescription = null, tint = Color.Cyan)
+                        Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("استيراد", color = Color.Cyan)
+                        Text("استيراد", fontSize = 13.sp)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Black.copy(alpha = 0.9f),
+                    containerColor = Color(0xFF1C1C1E),
                     titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White
+                    navigationIconContentColor = Color.White,
+                    actionIconContentColor = Color(0xFF0A84FF)
                 )
             )
         },
-        containerColor = Color(0xFF121212)
+        containerColor = Color(0xFF000000)
     ) { padding ->
         Column(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
         ) {
-            // Search Bar
             OutlinedTextField(
                 value = searchQuery,
-                onValueChange = viewModel::onSearchQueryChanged,
+                onValueChange = { viewModel.onSearchQueryChanged(it) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
-                placeholder = { Text("ابحث عن محافظة...", color = Color.Gray) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.Gray) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { viewModel.onSearchQueryChanged("") }) {
-                            Icon(Icons.Default.Close, contentDescription = null, tint = Color.Gray)
-                        }
-                    }
-                },
+                    .padding(horizontal = 12.dp, vertical = 12.dp)
+                    .height(54.dp),
+                placeholder = { Text("ابحث عن محافظة...", color = Color.Gray, fontSize = 14.sp) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(20.dp)) },
                 shape = RoundedCornerShape(12.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color.Cyan,
-                    unfocusedBorderColor = Color.DarkGray,
+                    focusedBorderColor = Color(0xFF0A84FF),
+                    unfocusedBorderColor = Color(0xFF2C2C2E),
+                    focusedContainerColor = Color(0xFF1C1C1E),
+                    unfocusedContainerColor = Color(0xFF1C1C1E),
                     focusedTextColor = Color.White,
                     unfocusedTextColor = Color.White,
-                    cursorColor = Color.Cyan
+                    cursorColor = Color(0xFF0A84FF)
                 ),
                 singleLine = true
             )
 
-            Text(
-                "المحافظات السورية",
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                style = MaterialTheme.typography.titleMedium,
-                color = Color.Cyan,
-                fontWeight = FontWeight.Bold
-            )
-
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                contentPadding = PaddingValues(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(filteredProvinces) { province ->
                     ProvinceItem(
@@ -140,118 +128,139 @@ fun ProvinceItem(
     onDownload: () -> Unit,
     onDelete: () -> Unit
 ) {
+    var showDeleteDialog by remember { mutableStateOf(false) }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("تأكيد الحذف", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = { Text("سيتم مسح كافة البيانات المحملة لهذه المنطقة.", color = Color.LightGray) },
+            confirmButton = {
+                TextButton(onClick = { onDelete(); showDeleteDialog = false }) {
+                    Text("حذف", color = Color(0xFFFF453A), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text("إلغاء", color = Color.Gray)
+                }
+            },
+            containerColor = Color(0xFF1C1C1E),
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1E1E1E)
-        ),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1C1E)),
         shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        border = if (province.isDownloading) BorderStroke(1.dp, Color(0xFF0A84FF)) else null
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Top
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = province.nameAr,
                         style = MaterialTheme.typography.titleLarge,
                         color = Color.White,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 20.sp
                     )
                     Text(
                         text = if (province.isDownloading) province.status else province.name,
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (province.isDownloading) Color.Cyan else Color.Gray
+                        color = if (province.isDownloading) Color(0xFF0A84FF) else Color.Gray,
+                        fontWeight = FontWeight.Bold
                     )
                 }
 
                 Box(contentAlignment = Alignment.Center) {
                     if (province.isDownloaded) {
-                        IconButton(onClick = onDelete) {
-                            Icon(Icons.Default.Delete, contentDescription = "حذف", tint = Color.Red.copy(alpha = 0.7f))
+                        IconButton(
+                            onClick = { showDeleteDialog = true },
+                            modifier = Modifier.background(Color(0xFFFF453A).copy(alpha = 0.1f), CircleShape)
+                        ) {
+                            Icon(Icons.Default.DeleteSweep, contentDescription = null, tint = Color(0xFFFF453A), modifier = Modifier.size(20.dp))
                         }
-                    } else if (province.isDownloading) {
-                        CircularProgressIndicator(
-                            progress = { province.progress },
-                            modifier = Modifier.size(32.dp),
-                            color = Color.Cyan,
-                            strokeWidth = 3.dp,
-                            trackColor = Color.DarkGray
-                        )
-                        Text(
-                            text = "${(province.progress * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.Cyan,
-                            fontSize = 8.sp
-                        )
-                    } else {
-                        IconButton(onClick = onDownload) {
-                            Icon(Icons.Default.Download, contentDescription = "تحميل", tint = Color.Cyan)
+                    } else if (!province.isDownloading) {
+                        IconButton(
+                            onClick = onDownload,
+                            modifier = Modifier.background(Color(0xFF0A84FF).copy(alpha = 0.15f), CircleShape)
+                        ) {
+                            Icon(Icons.Default.CloudDownload, contentDescription = null, tint = Color(0xFF0A84FF), modifier = Modifier.size(22.dp))
                         }
                     }
                 }
             }
 
             if (province.isDownloading) {
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(20.dp))
+                
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Bottom
                 ) {
-                    Text(
-                        "تم تحميل: ${province.size}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.Gray
-                    )
-                    Text(
-                        "${province.completedResources} / ${province.totalResources}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.Gray
-                    )
+                    Column {
+                        Text(
+                            text = "${(province.progress * 100).toInt()}%",
+                            style = MaterialTheme.typography.displaySmall,
+                            fontWeight = FontWeight.Black,
+                            color = Color(0xFF0A84FF),
+                            fontSize = 36.sp
+                        )
+                        Text(
+                            text = province.speed,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF30D158),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            text = "${province.completedResources} / ${province.totalResources}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.LightGray,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = province.size,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.Gray
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.height(4.dp))
+
+                Spacer(modifier = Modifier.height(14.dp))
+                
                 LinearProgressIndicator(
                     progress = { province.progress },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(8.dp)
-                        .clip(RoundedCornerShape(4.dp)),
-                    color = Color.Cyan,
-                    trackColor = Color.DarkGray
+                        .clip(CircleShape),
+                    color = Color(0xFF0A84FF),
+                    trackColor = Color(0xFF2C2C2E)
                 )
             } else if (province.isDownloaded) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Spacer(modifier = Modifier.height(14.dp))
+                Surface(
+                    color = Color(0xFF30D158).copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.align(Alignment.Start)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = Color.Green,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            "جاهز للاستخدام أوفلاين",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.Green
-                        )
-                    }
-                    if (province.size.isNotEmpty()) {
-                        Text(
-                            province.size,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.Gray
-                        )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Verified, contentDescription = null, tint = Color(0xFF30D158), modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("جاهزة للعمل الميداني", style = MaterialTheme.typography.labelSmall, color = Color(0xFF30D158), fontWeight = FontWeight.Black)
                     }
                 }
             }
