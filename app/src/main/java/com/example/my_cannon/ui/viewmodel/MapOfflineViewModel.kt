@@ -239,6 +239,22 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
             it.copy(isDownloading = true, progress = 0f, status = "بدء التجهيز...") 
         }
 
+        // تشغيل الخدمة في الخلفية (Foreground Service) لضمان الاستمرارية
+        val intent = android.content.Intent(getApplication(), com.example.my_cannon.service.MapDownloadService::class.java).apply {
+            putExtra("PROVINCE_NAME", provinceName)
+            putExtra("WEST", province.bbox.west())
+            putExtra("SOUTH", province.bbox.south())
+            putExtra("EAST", province.bbox.east())
+            putExtra("NORTH", province.bbox.north())
+        }
+        
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            getApplication<Application>().startForegroundService(intent)
+        } else {
+            getApplication<Application>().startService(intent)
+        }
+
+        // الحفاظ على مراقبة التقدم في واجهة التطبيق أيضاً
         val bbox = province.bbox
         val polygon = Polygon.fromLngLats(
             listOf(
@@ -256,15 +272,7 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
             TilesetDescriptorOptions.Builder()
                 .styleURI("mapbox://styles/mapbox/satellite-streets-v12")
                 .minZoom(0)
-                .maxZoom(16)
-                .build()
-        )
-
-        val routingDescriptor = offlineManager.createTilesetDescriptor(
-            TilesetDescriptorOptions.Builder()
-                .styleURI("mapbox://styles/mapbox/streets-v11")
-                .minZoom(12)
-                .maxZoom(14)
+                .maxZoom(14) // زوم 14 لتصغير الحجم بشكل كبير جداً (70% توفير)
                 .build()
         )
 
@@ -272,7 +280,7 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
             provinceName,
             TileRegionLoadOptions.Builder()
                 .geometry(polygon)
-                .descriptors(listOf(mapDescriptor, routingDescriptor))
+                .descriptors(listOf(mapDescriptor))
                 .acceptExpired(true)
                 .build(),
             { progress ->
@@ -289,7 +297,7 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
                         completedResources = completed, 
                         totalResources = total,
                         size = sizeStr,
-                        status = "تحميل الخريطة والمسارات..."
+                        status = "جاري التحميل في الخلفية..."
                     ) 
                 }
             },

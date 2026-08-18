@@ -200,8 +200,16 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
     ) { permissions ->
         locationPermissionGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
                 permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        
         if (locationPermissionGranted) {
             checkAndEnableGPS()
+        }
+    }
+
+    // طلب صلاحية الإشعارات لأندرويد 13+ لضمان ظهور شريط تحميل الخرائط
+    LaunchedEffect(Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            launcher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
         }
     }
 
