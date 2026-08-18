@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">My Cannon</string>
     <!-- Replace with your actual Mapbox Public Access Token -->
-    <string name="mapbox_access_token" translatable="false">YOUR_MAPBOX_ACCESS_TOKEN</string>
+    <string name="mapbox_access_token" translatable="false">pk.eyJ1IjoiYWhtYWRzYWxlaDk2Mzk2NCIsImEiOiJjbHlkaGhsOG0wNjlyMnJxd3dlOG5wbWRpIn0.EnKAMUm4A3Oi1rm-Lhl9QQ</string>
 </resources>

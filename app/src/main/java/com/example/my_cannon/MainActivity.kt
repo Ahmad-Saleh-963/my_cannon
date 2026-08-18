@@ -41,6 +41,11 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import kotlinx.coroutines.delay
 import kotlin.time.Duration.Companion.seconds
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.my_cannon.data.model.PointType
@@ -56,8 +61,13 @@ import com.example.my_cannon.ui.viewmodel.CannonViewModel
 import com.example.my_cannon.data.model.CannonPosition
 import com.example.my_cannon.data.model.TargetPosition
 import com.example.my_cannon.data.model.ReferencePoint
+import com.example.my_cannon.ui.screens.OfflineMapsScreen
 import com.google.android.gms.common.api.ResolvableApiException
 import com.google.android.gms.location.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import com.example.my_cannon.ui.viewmodel.MapOfflineViewModel
+import com.mapbox.geojson.LineString
 import com.mapbox.geojson.Point
 import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportState
 
@@ -84,8 +94,26 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(viewModel: CannonViewModel = viewModel()) {
+fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOfflineViewModel = viewModel()) {
     val context = LocalContext.current
+    
+    var destinationPoint by remember { mutableStateOf<com.mapbox.geojson.Point?>(null) }
+    var isSearchBarVisible by remember { mutableStateOf(false) }
+
+    val searchQuery by offlineViewModel.searchQuery.collectAsState()
+    val searchResults by offlineViewModel.searchResults.collectAsState()
+    val isSearching by offlineViewModel.isSearching.collectAsState()
+    val routeGeometry by offlineViewModel.currentRoute.collectAsState()
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    // مؤقت لإخفاء شريط البحث تلقائياً
+    LaunchedEffect(isSearchBarVisible) {
+        if (isSearchBarVisible) {
+            delay(5.seconds)
+            if (searchQuery.isEmpty()) isSearchBarVisible = false
+        }
+    }
+
     LaunchedEffect(Unit) {
         viewModel.initPrefs(context)
     }
@@ -143,7 +171,10 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
     }
 
     fun checkAndEnableGPS() {
-        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000).build()
+        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 500) // تحديث فائق السرعة كل نصف ثانية
+            .setMinUpdateIntervalMillis(200) // السماح بتحديثات أسرع إذا توفرت
+            .setWaitForAccurateLocation(true)
+            .build()
         val builder = LocationSettingsRequest.Builder()
             .addLocationRequest(locationRequest)
             .setAlwaysShow(true)
@@ -185,15 +216,163 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
         ) {
             when (selectedTab) {
                 0 -> {
+                    // الخريطة تأخذ كامل الشاشة
                     MapViewContainer(
                         viewModel = viewModel,
                         mapViewportState = mapViewportState,
                         locationPermissionGranted = locationPermissionGranted,
+                        routeGeometry = routeGeometry,
+                        destinationPoint = destinationPoint,
                         modifier = Modifier.fillMaxSize()
                     )
+
+                    // منطقة حساسة للسحب من الأعلى للأسفل لإظهار البحث
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(60.dp)
+                            .align(Alignment.TopCenter)
+                            .pointerInput(Unit) {
+                                detectVerticalDragGestures { _, dragAmount ->
+                                    if (dragAmount > 10) isSearchBarVisible = true
+                                }
+                            }
+                    )
+
+                    // شريط البحث العلوي التفاعلي
+                    AnimatedVisibility(
+                        visible = isSearchBarVisible,
+                        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+                        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+                        modifier = Modifier.align(Alignment.TopCenter)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 48.dp)
+                        ) {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(24.dp),
+                                color = Color.Black.copy(alpha = 0.8f),
+                                tonalElevation = 8.dp
+                            ) {
+                                TextField(
+                                    value = searchQuery,
+                                    onValueChange = { offlineViewModel.onSearchQueryChanged(it) },
+                                    placeholder = { Text("بحث عن منطقة...", color = Color.Gray, fontSize = 14.sp) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = TextFieldDefaults.colors(
+                                        focusedContainerColor = Color.Transparent,
+                                        unfocusedContainerColor = Color.Transparent,
+                                        focusedIndicatorColor = Color.Transparent,
+                                        unfocusedIndicatorColor = Color.Transparent,
+                                        focusedTextColor = Color.White,
+                                        unfocusedTextColor = Color.White
+                                    ),
+                                    leadingIcon = { 
+                                        if (isSearching) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(20.dp),
+                                                strokeWidth = 2.dp,
+                                                color = Color.Cyan
+                                            )
+                                        } else {
+                                            Icon(Icons.Default.Search, contentDescription = null, tint = Color.Cyan)
+                                        }
+                                    },
+                                    trailingIcon = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (searchQuery.isNotEmpty()) {
+                                                IconButton(onClick = { 
+                                                    offlineViewModel.onSearchQueryChanged("")
+                                                    destinationPoint = null
+                                                    offlineViewModel.clearRoute()
+                                                }) {
+                                                    Icon(Icons.Default.Close, contentDescription = null, tint = Color.Gray)
+                                                }
+                                            }
+                                        }
+                                    },
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                    keyboardActions = KeyboardActions(
+                                        onSearch = {
+                                            if (searchResults.isNotEmpty()) {
+                                                val (name, point) = searchResults.first()
+                                                destinationPoint = point
+                                                offlineViewModel.onSearchQueryChanged(name)
+                                                mapViewportState.setCameraOptions {
+                                                    center(point)
+                                                    zoom(14.0)
+                                                }
+                                                // تحديد نقطة البداية من موقع الـ GPS الحالي
+                                                val currentLoc = viewModel.getLastLocation()
+                                                val start = if (currentLoc != null) {
+                                                    com.mapbox.geojson.Point.fromLngLat(currentLoc.second, currentLoc.first)
+                                                } else {
+                                                    viewModel.cannonPos?.geoPoint?.let { 
+                                                        com.mapbox.geojson.Point.fromLngLat(it.longitude, it.latitude) 
+                                                    } ?: com.mapbox.geojson.Point.fromLngLat(36.2765, 33.5138)
+                                                }
+                                                offlineViewModel.calculateDrivingRoute(start, point)
+                                                
+                                                // إغلاق الكيبورد والشريط بعد إتمام العملية بنجاح
+                                                keyboardController?.hide()
+                                                isSearchBarVisible = false
+                                            }
+                                        }
+                                    )
+                                )
+                            }
+
+                            // نتائج البحث
+                            if (searchResults.isNotEmpty()) {
+                                Card(
+                                    modifier = Modifier.padding(top = 8.dp).fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.9f)),
+                                    shape = RoundedCornerShape(16.dp)
+                                ) {
+                                    Column {
+                                        searchResults.forEach { (name, point) ->
+                                            ListItem(
+                                                headlineContent = { Text(name, color = Color.White) },
+                                                leadingContent = { Icon(Icons.Default.LocationOn, contentDescription = null, tint = Color.Red) },
+                                                modifier = Modifier.combinedClickable(
+                                                    onClick = {
+                                                        destinationPoint = point
+                                                        offlineViewModel.onSearchQueryChanged(name)
+                                                        mapViewportState.setCameraOptions {
+                                                            center(point)
+                                                            zoom(14.0)
+                                                        }
+                                                        // تحديد نقطة البداية من موقع الـ GPS الحالي
+                                                        val currentLoc = viewModel.getLastLocation()
+                                                        val start = if (currentLoc != null) {
+                                                            com.mapbox.geojson.Point.fromLngLat(currentLoc.second, currentLoc.first)
+                                                        } else {
+                                                            viewModel.cannonPos?.geoPoint?.let { 
+                                                                com.mapbox.geojson.Point.fromLngLat(it.longitude, it.latitude) 
+                                                            } ?: com.mapbox.geojson.Point.fromLngLat(36.2765, 33.5138)
+                                                        }
+                                                        offlineViewModel.calculateDrivingRoute(start, point)
+                                                        isSearchBarVisible = false
+                                                    }
+                                                ),
+                                                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                                            )
+                                            HorizontalDivider(color = Color.DarkGray.copy(alpha = 0.5f))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 3 -> {
                     CannonSimulationScreen(onExit = { selectedTab = 0 })
+                }
+                4 -> {
+                    OfflineMapsScreen(onBack = { selectedTab = 0 })
                 }
                 else -> {
                     Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
@@ -312,7 +491,8 @@ fun MainScreen(viewModel: CannonViewModel = viewModel()) {
                             .align(Alignment.BottomEnd)
                             .padding(end = 16.dp, bottom = 64.dp), // مسافة أقل لتناسب الشريط الجديد
                         viewModel = viewModel,
-                        currentType = viewModel.selectedPointType
+                        currentType = viewModel.selectedPointType,
+                        onNavigateToOffline = { selectedTab = 4 }
                     )
                 }
             }
@@ -393,7 +573,7 @@ private fun fetchAndSaveLocation(
     viewModel: CannonViewModel, 
     mapViewportState: com.mapbox.maps.extension.compose.animation.viewport.MapViewportState
 ) {
-    if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+    if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
         val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
         try {
             fusedLocationClient.lastLocation.addOnSuccessListener { location ->
@@ -418,7 +598,12 @@ private fun fetchAndSaveLocation(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun SpeedDialFab(modifier: Modifier, viewModel: CannonViewModel, currentType: PointType) {
+fun SpeedDialFab(
+    modifier: Modifier, 
+    viewModel: CannonViewModel, 
+    currentType: PointType,
+    onNavigateToOffline: () -> Unit
+) {
     var expanded by remember { mutableStateOf(false) }
     val rotation by animateFloatAsState(if (expanded) 45f else 0f, label = "fab_rotation")
     
@@ -492,6 +677,15 @@ fun SpeedDialFab(modifier: Modifier, viewModel: CannonViewModel, currentType: Po
                     },
                     onLongClick = {
                         viewModel.openManualAddDialog(PointType.REFERENCE)
+                        expanded = false
+                    }
+                )
+                SpeedDialItem(
+                    label = "خرائط أوفلاين",
+                    icon = Icons.Default.Settings,
+                    color = Color.Cyan,
+                    onClick = {
+                        onNavigateToOffline()
                         expanded = false
                     }
                 )

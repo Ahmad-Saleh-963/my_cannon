@@ -2,6 +2,7 @@
 
 package com.example.my_cannon.ui.components
 
+import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -29,6 +30,7 @@ import com.mapbox.maps.extension.compose.MapboxMap
 import com.mapbox.maps.extension.compose.animation.viewport.MapViewportState
 import com.mapbox.maps.extension.compose.annotation.IconImage
 import com.mapbox.maps.extension.compose.annotation.generated.PointAnnotation
+import com.mapbox.geojson.LineString
 import com.mapbox.maps.extension.compose.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.extension.compose.style.MapStyle
 import com.mapbox.maps.extension.style.layers.properties.generated.IconAnchor
@@ -36,7 +38,11 @@ import com.mapbox.maps.extension.style.layers.generated.SymbolLayer
 import com.mapbox.maps.extension.style.layers.getLayerAs
 import com.mapbox.maps.plugin.PuckBearing
 import com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck
+import androidx.compose.material.icons.filled.Circle
 import com.mapbox.maps.plugin.locationcomponent.location
+import com.mapbox.maps.plugin.viewport.data.FollowPuckViewportStateOptions
+import com.mapbox.maps.plugin.viewport.data.FollowPuckViewportStateBearing
+import com.mapbox.maps.EdgeInsets
 
 @OptIn(MapboxExperimental::class)
 @Composable
@@ -44,17 +50,31 @@ fun MapViewContainer(
     viewModel: CannonViewModel,
     mapViewportState: MapViewportState,
     locationPermissionGranted: Boolean,
-    modifier: Modifier = Modifier
+    routeGeometry: LineString? = null,
+    destinationPoint: Point? = null,
+    @SuppressLint("ModifierParameter") modifier: Modifier = Modifier
 ) {
     // الأيقونات التكتيكية الاحترافية
     val cannonBitmap = rememberIconBitmap(Icons.Default.GpsFixed, Color.Green)
     val targetBitmap = rememberIconBitmap(Icons.Default.TrackChanges, Color.Red)
     val refBitmap = rememberIconBitmap(Icons.Default.Flag, Color.Blue)
+    val dotBitmap = rememberIconBitmap(Icons.Default.Circle, Color.Cyan) // دائرة المسار
 
-    // التركيز الفوري على الموقع عند أول ظهور للنقطة الزرقاء
-    LaunchedEffect(locationPermissionGranted) {
+    // التركيز الفوري على الموقع وتفعيل وضع الملاحة
+    LaunchedEffect(locationPermissionGranted, routeGeometry) {
         if (locationPermissionGranted) {
-            mapViewportState.transitionToFollowPuckState()
+            if (routeGeometry != null) {
+                // وضع الملاحة الاحترافي: موقعك في الأسفل، الخريطة تدور مع حركتك
+                mapViewportState.transitionToFollowPuckState(
+                    followPuckViewportStateOptions = FollowPuckViewportStateOptions.Builder()
+                        .padding(EdgeInsets(100.0, 0.0, 550.0, 0.0)) 
+                        .zoom(17.0)
+                        .pitch(50.0) 
+                        .build()
+                )
+            } else {
+                mapViewportState.transitionToFollowPuckState()
+            }
         }
     }
 
@@ -63,7 +83,7 @@ fun MapViewContainer(
             modifier = Modifier.fillMaxSize(),
             mapViewportState = mapViewportState,
             style = {
-                MapStyle(style = "mapbox://styles/ahmadsaleh963964/clydiahhj00o001nwggjtai7v")
+                MapStyle(style = "mapbox://styles/mapbox/satellite-streets-v12")
             },
             compass = {
                 Compass(
@@ -98,7 +118,7 @@ fun MapViewContainer(
                 mapView.location.updateSettings {
                     enabled = locationPermissionGranted
                     puckBearingEnabled = true
-                    puckBearing = PuckBearing.HEADING
+                    puckBearing = PuckBearing.COURSE // الاعتماد على اتجاه الحركة الفعلي بدلاً من البوصلة لثبات أعلى
                     locationPuck = createDefault2DPuck(withBearing = true)
                     showAccuracyRing = true
                 }
@@ -173,6 +193,34 @@ fun MapViewContainer(
                     iconImage = IconImage(refBitmap)
                     iconAnchor = IconAnchor.BOTTOM
                     iconSize = 1.0
+                }
+            }
+
+            // رسم المسار الاحترافي بستايل Google Maps حرفياً
+            routeGeometry?.let {
+                val points = it.coordinates()
+                
+                // 1. الطبقة السفلية (الظل/الحدود) لزيادة البروز
+                PolylineAnnotation(points = points) {
+                    lineColor = Color(0xFF1A5A99) // أزرق داكن للحدود
+                    lineWidth = 10.0 // عريض جداً بالخلفية
+                    lineOpacity = 0.8
+                }
+                
+                // 2. الطبقة العلوية (المسار الأساسي)
+                PolylineAnnotation(points = points) {
+                    lineColor = Color(0xFF4285F4) // لون جوجل مابس الأزرق الرسمي
+                    lineWidth = 6.0 // الخط الأساسي
+                    lineOpacity = 1.0
+                }
+            }
+
+            // رسم نقطة الوجهة
+            destinationPoint?.let {
+                PointAnnotation(point = it) {
+                    iconImage = IconImage(targetBitmap) // استخدام نفس أيقونة الهدف
+                    iconAnchor = IconAnchor.CENTER
+                    iconSize = 1.5
                 }
             }
         }
