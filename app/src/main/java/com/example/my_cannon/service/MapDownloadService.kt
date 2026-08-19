@@ -49,13 +49,10 @@ class MapDownloadService : Service() {
 
         requestHighPriorityNetwork()
 
-        // إنشاء المسار باحترافية مع معالجة احتمالية عدم وجود المجلد الرئيسي
-        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        if (!downloads.exists()) downloads.mkdirs()
-        val folder = File(downloads, "mymap")
+        // استخدام نفس المسار الآمن
+        val folder = File(filesDir, "mymap")
         if (!folder.exists()) folder.mkdirs()
-        
-        val path = if (folder.exists()) folder.absolutePath else getExternalFilesDir(null)?.absolutePath ?: filesDir.absolutePath
+        val path = folder.absolutePath
         
         tileStore = TileStore.create(path)
         offlineManager = OfflineManager()

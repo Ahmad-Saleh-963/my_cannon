@@ -4,7 +4,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
+import android.app.Application
 import com.example.my_cannon.data.model.*
 import com.example.my_cannon.domain.calculator.ArtilleryCalculator
 import com.example.my_cannon.domain.calculator.UtmConverter
@@ -12,17 +13,16 @@ import java.util.Locale
 import android.content.Context
 import android.content.SharedPreferences
 
-class CannonViewModel : ViewModel() {
-    private var sharedPrefs: SharedPreferences? = null
+class CannonViewModel(application: Application) : AndroidViewModel(application) {
+    private val sharedPrefs: SharedPreferences = application.getSharedPreferences("cannon_prefs", Context.MODE_PRIVATE)
 
-    fun initPrefs(context: Context) {
-        sharedPrefs = context.getSharedPreferences("cannon_prefs", Context.MODE_PRIVATE)
-        loadCannonPosition() // تحميل موقع المربط المحفوظ عند البدء
+    init {
+        loadCannonPosition()
     }
 
     private fun loadCannonPosition() {
-        val lat = sharedPrefs?.getFloat("cannon_lat", -1f) ?: -1f
-        val lon = sharedPrefs?.getFloat("cannon_lon", -1f) ?: -1f
+        val lat = sharedPrefs.getFloat("cannon_lat", -1f)
+        val lon = sharedPrefs.getFloat("cannon_lon", -1f)
         if (lat != -1f && lon != -1f) {
             val geo = GeoPoint(lat.toDouble(), lon.toDouble())
             val utm = UtmConverter.fromGeoToUtm(geo)
@@ -32,7 +32,7 @@ class CannonViewModel : ViewModel() {
     }
 
     fun saveCannonPosition(lat: Double, lon: Double) {
-        sharedPrefs?.edit()?.apply {
+        sharedPrefs.edit().apply {
             putFloat("cannon_lat", lat.toFloat())
             putFloat("cannon_lon", lon.toFloat())
             apply()
@@ -40,7 +40,7 @@ class CannonViewModel : ViewModel() {
     }
 
     fun saveLastLocation(lat: Double, lon: Double) {
-        sharedPrefs?.edit()?.apply {
+        sharedPrefs.edit().apply {
             putFloat("last_lat", lat.toFloat())
             putFloat("last_lon", lon.toFloat())
             apply()
@@ -48,8 +48,8 @@ class CannonViewModel : ViewModel() {
     }
 
     fun getLastLocation(): Pair<Double, Double>? {
-        val lat = sharedPrefs?.getFloat("last_lat", -1f) ?: -1f
-        val lon = sharedPrefs?.getFloat("last_lon", -1f) ?: -1f
+        val lat = sharedPrefs.getFloat("last_lat", -1f)
+        val lon = sharedPrefs.getFloat("last_lon", -1f)
         if (lat == -1f || lon == -1f) return null
         return Pair(lat.toDouble(), lon.toDouble())
     }

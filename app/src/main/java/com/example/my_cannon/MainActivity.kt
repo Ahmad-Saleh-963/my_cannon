@@ -66,6 +66,8 @@ import com.google.android.gms.common.api.ResolvableApiException
 import com.google.android.gms.location.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import com.example.my_cannon.ui.viewmodel.MapOfflineViewModel
 import com.mapbox.geojson.LineString
 import com.mapbox.geojson.Point
@@ -101,9 +103,11 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
     var isSearchBarVisible by remember { mutableStateOf(false) }
 
     val searchQuery by offlineViewModel.searchQuery.collectAsState()
-    val searchResults by offlineViewModel.proResults.collectAsState() // استخدام النتائج الجديدة
+    val searchResults by offlineViewModel.proResults.collectAsState()
     val isSearching by offlineViewModel.isSearching.collectAsState()
-    val routeGeometry by offlineViewModel.currentRoute.collectAsState()
+    val allRoutes by offlineViewModel.currentRoutes.collectAsState()
+    val selectedRouteIndex by offlineViewModel.selectedRouteIndex.collectAsState()
+    
     val keyboardController = LocalSoftwareKeyboardController.current
 
     // مؤقت لإخفاء شريط البحث تلقائياً
@@ -112,10 +116,6 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
             delay(5.seconds)
             if (searchQuery.isEmpty()) isSearchBarVisible = false
         }
-    }
-
-    LaunchedEffect(Unit) {
-        viewModel.initPrefs(context)
     }
 
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -143,15 +143,16 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
         selectedTab = 0
     }
 
-    // Hoisted Map State - initialized from cache if available
     val initialLoc = remember { viewModel.getLastLocation() }
     val mapViewportState = rememberMapViewportState {
         setCameraOptions {
             if (initialLoc != null) {
+                // إذا وجد موقع مخزن، نفتح عليه مباشرة وبدقة عالية دون المرور بدمشق
                 center(Point.fromLngLat(initialLoc.second, initialLoc.first))
-                zoom(14.0)
+                zoom(15.5)
             } else {
-                center(Point.fromLngLat(36.2765, 33.5138)) // Fallback
+                // إذا لم يوجد، نفتح على دمشق كخيار افتراضي
+                center(Point.fromLngLat(36.2765, 33.5138))
                 zoom(12.0)
             }
         }
@@ -229,7 +230,8 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                         viewModel = viewModel,
                         mapViewportState = mapViewportState,
                         locationPermissionGranted = locationPermissionGranted,
-                        routeGeometry = routeGeometry,
+                        allRoutes = allRoutes,
+                        selectedRouteIndex = selectedRouteIndex,
                         destinationPoint = destinationPoint,
                         modifier = Modifier.fillMaxSize()
                     )

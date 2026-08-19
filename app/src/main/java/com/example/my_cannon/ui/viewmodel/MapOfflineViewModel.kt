@@ -55,30 +55,21 @@ data class SearchResult(
     val point: Point
 )
 
+data class RouteInfo(
+    val geometry: LineString,
+    val durationMinutes: Int,
+    val distanceKm: Double,
+    val summary: String = ""
+)
+
 class MapOfflineViewModel(application: Application) : AndroidViewModel(application) {
 
     private val prefs = application.getSharedPreferences("map_download_prefs", Context.MODE_PRIVATE)
 
     private val mapRootPath: String by lazy {
-        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        // التأكد من وجود مجلد Download نفسه (لبعض الأنظمة المخصصة)
-        if (!downloads.exists()) {
-            try {
-                downloads.mkdirs()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-        
-        val folder = File(downloads, "mymap")
-        if (!folder.exists()) {
-            try {
-                folder.mkdirs()
-            } catch (e: Exception) {
-                // إذا فشل في المجلد العام، نستخدم المجلد الخاص بالتطبيق كخيار احتياطي لضمان العمل
-                return@lazy application.getExternalFilesDir(null)?.absolutePath ?: application.filesDir.absolutePath
-            }
-        }
+        // استخدام مسار داخلي آمن لضمان عمل التحميل 100% على كافة الإصدارات
+        val folder = File(application.filesDir, "mymap")
+        if (!folder.exists()) folder.mkdirs()
         folder.absolutePath
     }
 
@@ -100,8 +91,11 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
     private val _isSearching = MutableStateFlow(false)
     val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
 
-    private val _currentRoute = MutableStateFlow<LineString?>(null)
-    val currentRoute: StateFlow<LineString?> = _currentRoute.asStateFlow()
+    private val _currentRoutes = MutableStateFlow<List<RouteInfo>>(emptyList())
+    val currentRoutes: StateFlow<List<RouteInfo>> = _currentRoutes.asStateFlow()
+
+    private val _selectedRouteIndex = MutableStateFlow(0)
+    val selectedRouteIndex: StateFlow<Int> = _selectedRouteIndex.asStateFlow()
 
     private val _proResults = MutableStateFlow<List<SearchResult>>(emptyList())
     val proResults: StateFlow<List<SearchResult>> = _proResults.asStateFlow()
@@ -365,25 +359,55 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
 
     fun calculateDrivingRoute(start: Point, destination: Point) {
         viewModelScope.launch {
-            if (isOnline()) fetchOnlineRoute(start, destination)
-            else _currentRoute.value = LineString.fromLngLats(listOf(start, destination))
+            if (isOnline()) {
+                fetchOnlineRoutes(start, destination)
+            } else {
+                val direct = LineString.fromLngLats(listOf(start, destination))
+                _currentRoutes.value = listOf(RouteInfo(direct, 0, 0.0, "مسار مباشر (أوفلاين)"))
+                _selectedRouteIndex.value = 0
+            }
         }
     }
 
-    private suspend fun fetchOnlineRoute(start: Point, destination: Point) = withContext(Dispatchers.IO) {
+    private suspend fun fetchOnlineRoutes(start: Point, destination: Point) = withContext(Dispatchers.IO) {
         try {
             val token = getApplication<Application>().getString(R.string.mapbox_access_token)
-            val url = "https://api.mapbox.com/directions/v5/mapbox/driving/${start.longitude()},${start.latitude()};${destination.longitude()},${destination.latitude()}?geometries=geojson&overview=full&access_token=$token"
+            // طلب 3 مسارات بديلة
+            val url = "https://api.mapbox.com/directions/v5/mapbox/driving/${start.longitude()},${start.latitude()};${destination.longitude()},${destination.latitude()}?geometries=geojson&overview=full&alternatives=true&access_token=$token"
             val response = URL(url).readText()
             val json = JSONObject(response)
-            val routes = json.getJSONArray("routes")
-            if (routes.length() > 0) _currentRoute.value = LineString.fromJson(routes.getJSONObject(0).getJSONObject("geometry").toString())
+            val routesJson = json.getJSONArray("routes")
+            
+            val routesList = mutableListOf<RouteInfo>()
+            for (i in 0 until routesJson.length()) {
+                val route = routesJson.getJSONObject(i)
+                val geometryJson = route.getJSONObject("geometry")
+                val geometry = LineString.fromJson(geometryJson.toString())
+                val duration = (route.getDouble("duration") / 60.0).toInt()
+                val distance = route.getDouble("distance") / 1000.0
+                val summary = if (route.has("summary")) route.getString("summary") else "مسار ${i+1}"
+                
+                routesList.add(RouteInfo(geometry, duration, distance, summary))
+            }
+            _currentRoutes.value = routesList
+            _selectedRouteIndex.value = 0
         } catch (e: Exception) {
-            _currentRoute.value = LineString.fromLngLats(listOf(start, destination))
+            val direct = LineString.fromLngLats(listOf(start, destination))
+            _currentRoutes.value = listOf(RouteInfo(direct, 0, 0.0, "خطأ في جلب المسارات"))
+            _selectedRouteIndex.value = 0
         }
     }
 
-    fun clearRoute() { _currentRoute.value = null }
+    fun selectRoute(index: Int) {
+        if (index in _currentRoutes.value.indices) {
+            _selectedRouteIndex.value = index
+        }
+    }
+
+    fun clearRoute() { 
+        _currentRoutes.value = emptyList()
+        _selectedRouteIndex.value = 0
+    }
 
     private fun updateProvinceState(name: String, update: (ProvinceOfflineState) -> ProvinceOfflineState) {
         _provinces.value = _provinces.value.map { if (it.name == name) update(it) else it }
