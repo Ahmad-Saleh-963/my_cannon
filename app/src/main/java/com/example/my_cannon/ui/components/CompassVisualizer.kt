@@ -16,7 +16,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.my_cannon.data.model.CalculationResult
-import com.example.my_cannon.data.model.Quadrant
 import kotlin.math.cos
 import kotlin.math.sin
 

@@ -30,12 +30,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.TextFieldDefaults
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.my_cannon.ui.viewmodel.CannonViewModel
 import com.example.my_cannon.data.model.BallisticParams
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.sqrt
+import kotlin.time.Duration.Companion.milliseconds
 
 @Composable
 fun CannonSimulationScreen(onExit: () -> Unit, viewModel: CannonViewModel = viewModel()) {
@@ -243,7 +245,7 @@ fun CannonSimulationScreen(onExit: () -> Unit, viewModel: CannonViewModel = view
 
                 // Ballistic Trajectory (Parabolic) - Keep inside 3000m ceiling
                 val currentX = startX + (endX - startX) * progress
-                val dist = Math.abs(endX - startX)
+                val dist = abs(endX - startX)
                 val peakHeight = (dist * 0.15f).coerceAtMost(1500f) // Dynamic peak, max 1500m extra
 
                 val currentY = startY + (endY - startY) * progress + (peakHeight * 4 * progress * (1 - progress))
@@ -255,17 +257,22 @@ fun CannonSimulationScreen(onExit: () -> Unit, viewModel: CannonViewModel = view
 
                 missileX = currentX
                 missileY = currentY
-                missileAngle = Math.toDegrees(Math.atan2((nextY - currentY).toDouble(), (nextX - currentX).toDouble())).toFloat()
+                missileAngle = Math.toDegrees(
+                    atan2(
+                        (nextY - currentY).toDouble(),
+                        (nextX - currentX).toDouble()
+                    )
+                ).toFloat()
 
                 flameScale = if (progress < 0.25f) (1f - progress / 0.25f) else 0f
                 smokeTrail.add(Offset(currentX, currentY))
 
-                kotlinx.coroutines.delay(16)
+                kotlinx.coroutines.delay(16.milliseconds)
             }
 
             isFiring = false
             showExplosion = true
-            kotlinx.coroutines.delay(1000)
+            kotlinx.coroutines.delay(1000.milliseconds)
             showExplosion = false
         }
     }
@@ -493,7 +500,7 @@ fun DrawScope.drawTrajectoryPreview(sX: Float, sY: Float, eX: Float, eY: Float) 
     val path = Path().apply {
         val w = size.width
         val h = size.height
-        val dist = Math.abs(eX - sX)
+        val dist = abs(eX - sX)
         val peak = (dist * 0.15f).coerceAtMost(1500f)
 
         moveTo((sX / 50000f) * w, h - (sY / 3000f) * (h * 0.8f) - 60.dp.toPx())

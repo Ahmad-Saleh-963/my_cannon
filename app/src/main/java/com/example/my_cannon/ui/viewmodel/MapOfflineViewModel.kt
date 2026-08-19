@@ -7,13 +7,11 @@ import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
-import android.os.Environment
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.my_cannon.R
 import com.google.android.gms.location.LocationServices
-import com.google.android.gms.location.Priority
 import com.mapbox.common.TileStore
 import com.mapbox.common.TileRegionLoadOptions
 import com.mapbox.geojson.BoundingBox
@@ -33,6 +31,8 @@ import org.json.JSONObject
 import java.io.File
 import java.net.URL
 import java.util.Locale
+import androidx.core.content.edit
+import kotlin.time.Duration.Companion.milliseconds
 
 data class ProvinceOfflineState(
     val name: String,
@@ -80,13 +80,11 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
     val provinces: StateFlow<List<ProvinceOfflineState>> = _provinces.asStateFlow()
 
     private val _autoDownloadEnabled = MutableStateFlow(prefs.getBoolean("auto_download", false))
-    val autoDownloadEnabled: StateFlow<Boolean> = _autoDownloadEnabled.asStateFlow()
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
     private val _poiList = MutableStateFlow<Map<String, List<Pair<String, Point>>>>(emptyMap())
-    val poiList: StateFlow<Map<String, List<Pair<String, Point>>>> = _poiList.asStateFlow()
 
     private val _isSearching = MutableStateFlow(false)
     val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
@@ -132,20 +130,12 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
         )
     }
 
-    fun toggleAutoDownload(enabled: Boolean) {
-        _autoDownloadEnabled.value = enabled
-        prefs.edit().putBoolean("auto_download", enabled).apply()
-        if (enabled) {
-            startSmartAutoDownload()
-        }
-    }
-
     private fun startSmartAutoDownload() {
         if (ContextCompat.checkSelfPermission(getApplication(), Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             return
         }
 
-        val fusedLocationClient = LocationServices.getFusedLocationProviderClient(getApplication<Application>())
+        val fusedLocationClient = LocationServices.getFusedLocationProviderClient(getApplication())
         
         try {
             fusedLocationClient.lastLocation.addOnSuccessListener { location ->
@@ -196,7 +186,7 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
     private var lastUpdateTimeMap = mutableMapOf<String, Long>()
 
     fun downloadProvince(provinceName: String) {
-        prefs.edit().putBoolean("downloading_$provinceName", true).apply()
+        prefs.edit {putBoolean("downloading_$provinceName", true)}
         startLoading(provinceName)
     }
 
@@ -260,7 +250,7 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
             },
             { expected ->
                 if (expected.isValue) {
-                    prefs.edit().remove("downloading_$provinceName").apply()
+                    prefs.edit { remove("downloading_$provinceName") }
                     updateProvinceState(provinceName) { it.copy(isDownloading = false, isDownloaded = true, progress = 1f, status = "مكتمل", speed = "") }
                 } else {
                     updateProvinceState(provinceName) { it.copy(isDownloading = false, status = "متوقف مؤقتاً") }
@@ -271,9 +261,9 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
 
     fun deleteProvince(provinceName: String) {
         tileStore.removeTileRegion(provinceName)
-        prefs.edit().remove("downloading_$provinceName").apply()
+        prefs.edit { remove("downloading_$provinceName") }
         viewModelScope.launch {
-            delay(500)
+            delay(500.milliseconds)
             refreshDownloadedStates()
             updateProvinceState(provinceName) { it.copy(isDownloaded = false, isDownloading = false, progress = 0f, status = "تم الحذف") }
         }
@@ -348,7 +338,7 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
                 list.add(SearchResult(name, context, province, Point.fromLngLat(f.getJSONArray("center").getDouble(0), f.getJSONArray("center").getDouble(1))))
             }
             list
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             searchOfflinePro(query)
         }
     }
@@ -391,20 +381,14 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
             }
             _currentRoutes.value = routesList
             _selectedRouteIndex.value = 0
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             val direct = LineString.fromLngLats(listOf(start, destination))
             _currentRoutes.value = listOf(RouteInfo(direct, 0, 0.0, "خطأ في جلب المسارات"))
             _selectedRouteIndex.value = 0
         }
     }
 
-    fun selectRoute(index: Int) {
-        if (index in _currentRoutes.value.indices) {
-            _selectedRouteIndex.value = index
-        }
-    }
-
-    fun clearRoute() { 
+    fun clearRoute() {
         _currentRoutes.value = emptyList()
         _selectedRouteIndex.value = 0
     }

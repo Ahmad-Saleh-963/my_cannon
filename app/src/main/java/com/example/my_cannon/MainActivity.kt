@@ -64,12 +64,7 @@ import com.example.my_cannon.data.model.ReferencePoint
 import com.example.my_cannon.ui.screens.OfflineMapsScreen
 import com.google.android.gms.common.api.ResolvableApiException
 import com.google.android.gms.location.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
 import com.example.my_cannon.ui.viewmodel.MapOfflineViewModel
-import com.mapbox.geojson.LineString
 import com.mapbox.geojson.Point
 import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportState
 
@@ -99,7 +94,7 @@ class MainActivity : ComponentActivity() {
 fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOfflineViewModel = viewModel()) {
     val context = LocalContext.current
     
-    var destinationPoint by remember { mutableStateOf<com.mapbox.geojson.Point?>(null) }
+    var destinationPoint by remember { mutableStateOf<Point?>(null) }
     var isSearchBarVisible by remember { mutableStateOf(false) }
 
     val searchQuery by offlineViewModel.searchQuery.collectAsState()
@@ -269,9 +264,9 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                             ) {
                                 TextField(
                                     value = searchQuery,
-                                    onValueChange = { 
+                                    onValueChange = { it ->
                                         val currentPoint = viewModel.getLastLocation()?.let { Point.fromLngLat(it.second, it.first) }
-                                        offlineViewModel.onSearchQueryChanged(it, currentPoint) 
+                                        offlineViewModel.onSearchQueryChanged(it, currentPoint)
                                     },
                                     placeholder = { Text("بحث عن منطقة...", color = Color.Gray, fontSize = 14.sp) },
                                     modifier = Modifier.fillMaxWidth(),

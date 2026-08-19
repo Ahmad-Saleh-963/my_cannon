@@ -166,20 +166,11 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
         targets.clear()
         referencePoints.clear()
         mainResult = null
-        sharedPrefs?.edit()?.apply {
+        sharedPrefs.edit()?.apply {
             remove("cannon_lat")
             remove("cannon_lon")
             apply()
         }
-    }
-
-    fun removeTarget(target: TargetPosition) {
-        targets.remove(target)
-        calculateAll()
-    }
-
-    fun removeReferencePoint(point: ReferencePoint) {
-        referencePoints.remove(point)
     }
 
     fun updatePointManually(newGeo: GeoPoint? = null, newUtm: UtmPoint? = null) {
