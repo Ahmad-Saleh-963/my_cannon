@@ -30,24 +30,18 @@ import com.mapbox.maps.extension.compose.MapboxMap
 import com.mapbox.maps.extension.compose.animation.viewport.MapViewportState
 import com.mapbox.maps.extension.compose.annotation.IconImage
 import com.mapbox.maps.extension.compose.annotation.generated.PointAnnotation
-import com.mapbox.geojson.LineString
 import com.mapbox.maps.extension.compose.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.extension.compose.style.MapStyle
 import com.mapbox.maps.extension.style.layers.properties.generated.IconAnchor
-import com.mapbox.maps.extension.style.layers.generated.SymbolLayer
-import com.mapbox.maps.extension.style.layers.getLayerAs
 import androidx.compose.ui.platform.LocalConfiguration
 import com.example.my_cannon.ui.viewmodel.RouteInfo
 import com.mapbox.maps.plugin.PuckBearing
 import com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck
-import androidx.compose.material.icons.filled.Circle
-import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import com.mapbox.maps.ImageHolder
 import com.mapbox.maps.plugin.LocationPuck2D
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.filled.Explore
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import com.mapbox.maps.plugin.gestures.gestures
@@ -58,7 +52,9 @@ import com.mapbox.maps.plugin.locationcomponent.location
 import com.mapbox.maps.plugin.gestures.OnMoveListener
 import java.util.Locale
 import kotlin.time.Duration.Companion.seconds
+import androidx.core.graphics.createBitmap
 
+@SuppressLint("ConfigurationScreenWidthHeight")
 @OptIn(MapboxExperimental::class)
 @Composable
 fun MapViewContainer(
@@ -75,15 +71,14 @@ fun MapViewContainer(
     val cannonBitmap = rememberIconBitmap(Icons.Default.GpsFixed, Color.Green)
     val targetBitmap = rememberIconBitmap(Icons.Default.TrackChanges, Color.Red)
     val refBitmap = rememberIconBitmap(Icons.Default.Flag, Color.Blue)
-    val dotBitmap = rememberIconBitmap(Icons.Default.Circle, Color.Cyan) 
-    
+
     val carTopBitmap = rememberIconBitmap(Icons.Default.KeyboardArrowUp, Color.White)
     val carBodyBitmap = rememberIconBitmap(Icons.Default.Navigation, Color(0xFF007AFF))
     val carShadowBitmap = rememberIconBitmap(Icons.Default.Navigation, Color.Black.copy(alpha = 0.2f))
 
     // توليد ملصقات الوقت لكافة المسارات مسبقاً لضمان الأداء
     val routeLabels = allRoutes.map { route ->
-        val labelText = "\n ${route.durationMinutes} --  د " + String.format(Locale.US, "%.1f كم", route.distanceKm)
+        val labelText = " د ${route.durationMinutes}   -   " + String.format(Locale.US, "%.1f كم", route.distanceKm)
         rememberTextBitmap(labelText, Color(0xFF004AAD))
     }
 
@@ -338,7 +333,7 @@ fun rememberTextBitmap(text: String, bgColor: Color): Bitmap {
         val width = bounds.width() + (padding * 2)
         val height = bounds.height() + (padding * 2)
         
-        val bitmap = Bitmap.createBitmap(width.toInt(), height.toInt(), Bitmap.Config.ARGB_8888)
+        val bitmap = createBitmap(width.toInt(), height.toInt())
         val canvas = android.graphics.Canvas(bitmap)
         
         val bgPaint = android.graphics.Paint().apply {
