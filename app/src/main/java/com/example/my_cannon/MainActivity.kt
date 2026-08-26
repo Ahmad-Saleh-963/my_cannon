@@ -66,6 +66,7 @@ import com.google.android.gms.location.*
 import com.example.my_cannon.ui.viewmodel.MapOfflineViewModel
 import com.mapbox.geojson.Point
 import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportState
+import com.example.my_cannon.ui.screens.*
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -151,6 +152,17 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                 // إذا لم يوجد، نفتح على دمشق كخيار افتراضي
                 center(Point.fromLngLat(36.2765, 33.5138))
                 zoom(12.0)
+            }
+        }
+    }
+
+    // استماع لطلبات تحريك الكاميرا من القوائم
+    LaunchedEffect(Unit) {
+        viewModel.cameraMoveEvent.collect { geo ->
+            selectedTab = 0
+            mapViewportState.setCameraOptions {
+                center(Point.fromLngLat(geo.longitude, geo.latitude))
+                zoom(15.5)
             }
         }
     }
@@ -387,7 +399,37 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                     CannonSimulationScreen(onExit = { selectedTab = 0 })
                 }
                 4 -> {
-                    OfflineMapsScreen(onBack = { selectedTab = 0 })
+                    SettingsScreens(
+                        onBack = { selectedTab = 0 },
+                        onNavigateToOffline = { selectedTab = 5 },
+                        onNavigateToLists = { selectedTab = 6 }
+                    )
+                }
+                5 -> {
+                    OfflineMapsScreen(onBack = { selectedTab = 4 })
+                }
+                6 -> {
+                    ListsScreen(
+                        onBack = { selectedTab = 4 },
+                        onNavigateToTargets = { selectedTab = 7 },
+                        onNavigateToRefs = { selectedTab = 8 }
+                    )
+                }
+                7 -> {
+                    ListDetailsScreen(
+                        title = "قائمة الأهداف",
+                        type = PointType.TARGET,
+                        viewModel = viewModel,
+                        onBack = { selectedTab = 6 }
+                    )
+                }
+                8 -> {
+                    ListDetailsScreen(
+                        title = "نقاط العلام",
+                        type = PointType.REFERENCE,
+                        viewModel = viewModel,
+                        onBack = { selectedTab = 6 }
+                    )
                 }
                 else -> {
                     Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
@@ -691,7 +733,7 @@ fun SpeedDialFab(
                     }
                 )
                 SpeedDialItem(
-                    label = "خرائط أوفلاين",
+                    label = "الإعدادات",
                     icon = Icons.Default.Settings,
                     color = Color.Cyan,
                     onClick = {

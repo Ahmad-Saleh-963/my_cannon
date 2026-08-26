@@ -12,6 +12,10 @@ import com.example.my_cannon.domain.calculator.UtmConverter
 import java.util.Locale
 import android.content.Context
 import android.content.SharedPreferences
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
 
 class CannonViewModel(application: Application) : AndroidViewModel(application) {
     private val sharedPrefs: SharedPreferences = application.getSharedPreferences("cannon_prefs", Context.MODE_PRIVATE)
@@ -40,6 +44,15 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
     // نتائج الحسابات (للهدف الأول للتوافق أو إزالتها إذا استبدلت بالكامل)
     var mainResult by mutableStateOf<CalculationResult?>(null)
         private set
+
+    private val _cameraMoveEvent = MutableSharedFlow<GeoPoint>()
+    val cameraMoveEvent = _cameraMoveEvent.asSharedFlow()
+
+    fun moveToLocation(geoPoint: GeoPoint) {
+        viewModelScope.launch {
+            _cameraMoveEvent.emit(geoPoint)
+        }
+    }
 
     init {
         loadCannonPosition()
