@@ -16,6 +16,31 @@ import android.content.SharedPreferences
 class CannonViewModel(application: Application) : AndroidViewModel(application) {
     private val sharedPrefs: SharedPreferences = application.getSharedPreferences("cannon_prefs", Context.MODE_PRIVATE)
 
+    // حالة المربط
+    var cannonPos by mutableStateOf<CannonPosition?>(null)
+        private set
+
+    // قائمة الأهداف
+    val targets = mutableStateListOf<TargetPosition>()
+
+    // نقاط العلام
+    val referencePoints = mutableStateListOf<ReferencePoint>()
+
+    // معطيات الرمي (الباليستية)
+    var ballisticParams by mutableStateOf(BallisticParams())
+
+    // نوع النقطة التي يتم اختيارها حالياً من الخريطة
+    var selectedPointType by mutableStateOf(PointType.NONE)
+
+    // حالة حوار الإدخال اليدوي
+    var showEditDialog by mutableStateOf(value = false)
+    var pointToEdit by mutableStateOf<Any?>(null) // CannonPosition, TargetPosition, or ReferencePoint
+    var manualAddType by mutableStateOf<PointType?>(null)
+
+    // نتائج الحسابات (للهدف الأول للتوافق أو إزالتها إذا استبدلت بالكامل)
+    var mainResult by mutableStateOf<CalculationResult?>(null)
+        private set
+
     init {
         loadCannonPosition()
     }
@@ -54,31 +79,6 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
         return Pair(lat.toDouble(), lon.toDouble())
     }
 
-    // حالة المربط
-    var cannonPos by mutableStateOf<CannonPosition?>(null)
-        private set
-
-    // قائمة الأهداف
-    val targets = mutableStateListOf<TargetPosition>()
-
-    // نقاط العلام
-    val referencePoints = mutableStateListOf<ReferencePoint>()
-
-    // معطيات الرمي (الباليستية)
-    var ballisticParams by mutableStateOf(BallisticParams())
-
-    // نوع النقطة التي يتم اختيارها حالياً من الخريطة
-    var selectedPointType by mutableStateOf(PointType.NONE)
-
-    // حالة حوار الإدخال اليدوي
-    var showEditDialog by mutableStateOf(false)
-    var pointToEdit by mutableStateOf<Any?>(null) // CannonPosition, TargetPosition, or ReferencePoint
-    var manualAddType by mutableStateOf<PointType?>(null)
-
-    // نتائج الحسابات (للهدف الأول للتوافق أو إزالتها إذا استبدلت بالكامل)
-    var mainResult by mutableStateOf<CalculationResult?>(null)
-        private set
-
     fun updatePointFromMap(lat: Double, lon: Double) {
         if (selectedPointType == PointType.NONE) return
 
@@ -91,27 +91,27 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
                 saveCannonPosition(lat, lon) // حفظ دائم
                 calculateAll()
             }
-            PointType.TARGET -> {
-                val index = targets.size + 1
-                val newTarget = TargetPosition(
-                    id = String.format(Locale.US, "target_%d", index),
-                    name = String.format(Locale.US, "الهدف %d", index),
-                    geoPoint = geo,
-                    utmPoint = utm
-                )
-                targets.add(newTarget)
-                calculateAll()
-            }
-            PointType.REFERENCE -> {
-                val index = referencePoints.size + 1
-                val newRef = ReferencePoint(
-                    id = String.format(Locale.US, "ref_%d", index),
-                    name = String.format(Locale.US, "نقطة علام %d", index),
-                    geoPoint = geo,
-                    utmPoint = utm
-                )
-                referencePoints.add(newRef)
-            }
+                PointType.TARGET -> {
+                    val index = targets.size + 1
+                    val newTarget = TargetPosition(
+                        id = String.format(Locale.US, "target_%d", index),
+                        name = String.format(Locale.US, "الهدف %d", index),
+                        geoPoint = geo,
+                        utmPoint = utm
+                    )
+                    targets.add(newTarget)
+                    calculateAll()
+                }
+                PointType.REFERENCE -> {
+                    val index = referencePoints.size + 1
+                    val newRef = ReferencePoint(
+                        id = String.format(Locale.US, "ref_%d", index),
+                        name = String.format(Locale.US, "نقطة علام %d", index),
+                        geoPoint = geo,
+                        utmPoint = utm
+                    )
+                    referencePoints.add(newRef)
+                }
             else -> {}
         }
     }
@@ -173,46 +173,52 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun updatePointManually(newGeo: GeoPoint? = null, newUtm: UtmPoint? = null) {
-        val geo = newGeo ?: newUtm?.let { UtmConverter.fromUtmToGeo(it) } ?: return
-        val utm = newUtm ?: UtmConverter.fromGeoToUtm(geo)
-
-        val editingPoint = pointToEdit
-        if (editingPoint != null) {
-            // Case 1: Editing existing point
-            when (editingPoint) {
+    fun updatePointFull(
+        point: Any?,
+        type: PointType?,
+        name: String,
+        description: String,
+        elevation: Double,
+        geo: GeoPoint,
+        utm: UtmPoint
+    ) {
+        if (point != null) {
+            // Editing existing point
+            when (point) {
                 is CannonPosition -> {
-                    cannonPos = CannonPosition(id = editingPoint.id, name = editingPoint.name, geoPoint = geo, utmPoint = utm)
-                    saveCannonPosition(geo.latitude, geo.longitude) // تحديث الحفظ
+                    cannonPos = point.copy(name = name, description = description, elevation = elevation, geoPoint = geo, utmPoint = utm)
+                    saveCannonPosition(geo.latitude, geo.longitude)
                     calculateAll()
                 }
                 is TargetPosition -> {
-                    val index = targets.indexOf(editingPoint)
+                    val index = targets.indexOfFirst { it.id == point.id }
                     if (index != -1) {
-                        targets[index] = TargetPosition(id = editingPoint.id, name = editingPoint.name, geoPoint = geo, utmPoint = utm)
+                        targets[index] = point.copy(name = name, description = description, elevation = elevation, geoPoint = geo, utmPoint = utm)
+                        calculateAll()
                     }
-                    calculateAll()
                 }
                 is ReferencePoint -> {
-                    val index = referencePoints.indexOf(editingPoint)
+                    val index = referencePoints.indexOfFirst { it.id == point.id }
                     if (index != -1) {
-                        referencePoints[index] = ReferencePoint(id = editingPoint.id, name = editingPoint.name, geoPoint = geo, utmPoint = utm)
+                        referencePoints[index] = point.copy(name = name, description = description, geoPoint = geo, utmPoint = utm)
                     }
                 }
             }
-        } else {
-            // Case 2: Manual add new point
-            when (manualAddType) {
+        } else if (type != null) {
+            // Adding new point manually
+            when (type) {
                 PointType.CANNON -> {
-                    cannonPos = CannonPosition(geoPoint = geo, utmPoint = utm)
-                    saveCannonPosition(geo.latitude, geo.longitude) // تحديث الحفظ
+                    cannonPos = CannonPosition(name = name, description = description, elevation = elevation, geoPoint = geo, utmPoint = utm)
+                    saveCannonPosition(geo.latitude, geo.longitude)
                     calculateAll()
                 }
                 PointType.TARGET -> {
                     val index = targets.size + 1
                     targets.add(TargetPosition(
                         id = "target_$index",
-                        name = "الهدف $index",
+                        name = name,
+                        description = description,
+                        elevation = elevation,
                         geoPoint = geo,
                         utmPoint = utm
                     ))
@@ -222,7 +228,8 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
                     val index = referencePoints.size + 1
                     referencePoints.add(ReferencePoint(
                         id = "ref_$index",
-                        name = "نقطة علام $index",
+                        name = name,
+                        description = description,
                         geoPoint = geo,
                         utmPoint = utm
                     ))
@@ -234,6 +241,29 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
         showEditDialog = false
         pointToEdit = null
         manualAddType = null
+    }
+
+    fun deletePoint(point: Any) {
+        when (point) {
+            is CannonPosition -> {
+                cannonPos = null
+                sharedPrefs.edit()?.apply {
+                    remove("cannon_lat")
+                    remove("cannon_lon")
+                    apply()
+                }
+                mainResult = null
+            }
+            is TargetPosition -> {
+                targets.removeIf { it.id == point.id }
+                calculateAll()
+            }
+            is ReferencePoint -> {
+                referencePoints.removeIf { it.id == point.id }
+            }
+        }
+        showEditDialog = false
+        pointToEdit = null
     }
 
     fun openEditDialog(point: Any) {

@@ -51,16 +51,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.my_cannon.data.model.PointType
 import java.util.Locale
 import com.example.my_cannon.ui.components.CompassVisualizer
-import com.example.my_cannon.ui.components.CoordinateInputDialog
+import com.example.my_cannon.ui.components.UnifiedEditDialog
 import com.example.my_cannon.ui.components.MapViewContainer
 import com.example.my_cannon.ui.components.ResultsDashboard
 import com.example.my_cannon.ui.screens.TacticalGeometryScreen
 import com.example.my_cannon.ui.screens.CannonSimulationScreen
 import com.example.my_cannon.ui.theme.My_cannonTheme
 import com.example.my_cannon.ui.viewmodel.CannonViewModel
-import com.example.my_cannon.data.model.CannonPosition
-import com.example.my_cannon.data.model.TargetPosition
-import com.example.my_cannon.data.model.ReferencePoint
+import com.example.my_cannon.data.model.*
+import com.example.my_cannon.domain.calculator.UtmConverter
 import com.example.my_cannon.ui.screens.OfflineMapsScreen
 import com.google.android.gms.common.api.ResolvableApiException
 import com.google.android.gms.location.*
@@ -95,7 +94,7 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
     val context = LocalContext.current
     
     var destinationPoint by remember { mutableStateOf<Point?>(null) }
-    var isSearchBarVisible by remember { mutableStateOf(false) }
+    var isSearchBarVisible by remember { mutableStateOf(value = false) }
 
     val searchQuery by offlineViewModel.searchQuery.collectAsState()
     val searchResults by offlineViewModel.proResults.collectAsState()
@@ -129,7 +128,10 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
     // Location Permission State
     var locationPermissionGranted by remember {
         mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
         )
     }
 
@@ -194,8 +196,8 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        locationPermissionGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        locationPermissionGranted = (permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true) ||
+                (permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true)
         
         if (locationPermissionGranted) {
             checkAndEnableGPS()
@@ -512,25 +514,10 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
         }
 
         if (viewModel.showEditDialog) {
-            val point = viewModel.pointToEdit
-            if (point != null) {
-                val (title, geo, utm) = when (point) {
-                    is CannonPosition -> Triple("المربط", point.geoPoint, point.utmPoint)
-                    is TargetPosition -> Triple(point.name, point.geoPoint, point.utmPoint)
-                    is ReferencePoint -> Triple(point.name, point.geoPoint, point.utmPoint)
-                    else -> Triple("النقطة", com.example.my_cannon.data.model.GeoPoint(0.0, 0.0), com.example.my_cannon.data.model.UtmPoint(0.0, 0.0))
-                }
-
-                CoordinateInputDialog(
-                    title = title,
-                    initialGeo = geo,
-                    initialUtm = utm,
-                    onConfirm = { newGeo, newUtm ->
-                        viewModel.updatePointManually(newGeo, newUtm)
-                    },
-                    onDismiss = { viewModel.showEditDialog = false }
-                )
-            }
+            UnifiedEditDialog(
+                viewModel = viewModel,
+                onDismiss = { viewModel.showEditDialog = false }
+            )
         }
 
         // حوار تنبيه خدمات الموقع معطلة
@@ -596,7 +583,17 @@ private fun fetchAndSaveLocation(
                     
                     // 2. تحديث المربط تلقائياً إذا كان فارغاً
                     if (viewModel.cannonPos == null) {
-                        viewModel.updatePointManually(com.example.my_cannon.data.model.GeoPoint(it.latitude, it.longitude))
+                        val geo = GeoPoint(it.latitude, it.longitude)
+                        val utm = UtmConverter.fromGeoToUtm(geo)
+                        viewModel.updatePointFull(
+                            point = null,
+                            type = PointType.CANNON,
+                            name = "المربط",
+                            description = "",
+                            elevation = 0.0,
+                            geo = geo,
+                            utm = utm
+                        )
                     }
                     
                     // 3. تحريك الكاميرا فوراً للموقع
@@ -826,7 +823,7 @@ fun ExpandablePointDashboard(
     name: String,
     icon: ImageVector,
     color: Color,
-    result: com.example.my_cannon.data.model.CalculationResult?,
+    result: CalculationResult?,
     viewModel: CannonViewModel
 ) {
     var expanded by remember { mutableStateOf(false) }

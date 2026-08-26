@@ -57,13 +57,8 @@ object ArtilleryCalculator {
             Quadrant.FOURTH -> thetaDeg - 360.0
         }
 
-        // 5. حساب المسافة m = deltaX / sin(theta)
-        // إذا كانت theta قريبة من الصفر (الحركة شاقولية)، نستخدم deltaY
-        val distance = if (sin(thetaRad) > 1e-5) {
-            deltaX / sin(thetaRad)
-        } else {
-            deltaY
-        }
+        // 5. حساب المسافة الوترية المباشرة (Euclidean Distance) بدقة عالية جداً
+        val distance = hypot(deltaX, deltaY)
 
         return CalculationResult(
             deltaX = deltaX,
