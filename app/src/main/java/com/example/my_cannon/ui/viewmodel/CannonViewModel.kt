@@ -9,6 +9,8 @@ import android.app.Application
 import com.example.my_cannon.data.model.*
 import com.example.my_cannon.domain.calculator.ArtilleryCalculator
 import com.example.my_cannon.domain.calculator.UtmConverter
+import com.example.my_cannon.domain.elevation.ElevationRepository
+import com.example.my_cannon.domain.elevation.ElevationRepositoryImpl
 import java.util.Locale
 import android.content.Context
 import android.content.SharedPreferences
@@ -19,6 +21,21 @@ import kotlinx.coroutines.launch
 
 class CannonViewModel(application: Application) : AndroidViewModel(application) {
     private val sharedPrefs: SharedPreferences = application.getSharedPreferences("cannon_prefs", Context.MODE_PRIVATE)
+
+    // مستودع الارتفاع — يُهيَّأ بمجرد توفر التوكن من الموارد
+    private val elevationRepository: ElevationRepository by lazy {
+        ElevationRepositoryImpl(
+            mapboxToken = application.getString(
+                application.resources.getIdentifier("mapbox_access_token", "string", application.packageName)
+            )
+        )
+    }
+
+    /**
+     * IDs النقاط التي يجري الآن جلب ارتفاعها.
+     * يُستخدم لعرض مؤشر التحميل في الـ UI.
+     */
+    val elevationLoadingIds = mutableStateListOf<String>()
 
     // حالة المربط
     var cannonPos by mutableStateOf<CannonPosition?>(null)
@@ -100,32 +117,81 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
 
         when (selectedPointType) {
             PointType.CANNON -> {
-                cannonPos = CannonPosition(geoPoint = geo, utmPoint = utm)
-                saveCannonPosition(lat, lon) // حفظ دائم
+                val point = CannonPosition(geoPoint = geo, utmPoint = utm)
+                cannonPos = point
+                saveCannonPosition(lat, lon)
                 calculateAll()
+                fetchAndApplyElevation(point.id, lat, lon, PointType.CANNON)
             }
-                PointType.TARGET -> {
-                    val index = targets.size + 1
-                    val newTarget = TargetPosition(
-                        id = String.format(Locale.US, "target_%d", index),
-                        name = String.format(Locale.US, "الهدف %d", index),
-                        geoPoint = geo,
-                        utmPoint = utm
-                    )
-                    targets.add(newTarget)
-                    calculateAll()
-                }
-                PointType.REFERENCE -> {
-                    val index = referencePoints.size + 1
-                    val newRef = ReferencePoint(
-                        id = String.format(Locale.US, "ref_%d", index),
-                        name = String.format(Locale.US, "نقطة علام %d", index),
-                        geoPoint = geo,
-                        utmPoint = utm
-                    )
-                    referencePoints.add(newRef)
-                }
+            PointType.TARGET -> {
+                val index = targets.size + 1
+                val newTarget = TargetPosition(
+                    id = String.format(Locale.US, "target_%d_%d", index, System.currentTimeMillis()),
+                    name = String.format(Locale.US, "الهدف %d", index),
+                    geoPoint = geo,
+                    utmPoint = utm
+                )
+                targets.add(newTarget)
+                calculateAll()
+                fetchAndApplyElevation(newTarget.id, lat, lon, PointType.TARGET)
+            }
+            PointType.REFERENCE -> {
+                val index = referencePoints.size + 1
+                val newRef = ReferencePoint(
+                    id = String.format(Locale.US, "ref_%d_%d", index, System.currentTimeMillis()),
+                    name = String.format(Locale.US, "نقطة علام %d", index),
+                    geoPoint = geo,
+                    utmPoint = utm
+                )
+                referencePoints.add(newRef)
+                fetchAndApplyElevation(newRef.id, lat, lon, PointType.REFERENCE)
+            }
             else -> {}
+        }
+    }
+
+    /**
+     * يجلب الارتفاع في الخلفية ويُحدِّث النقطة المعنية تلقائياً.
+     * يُضيف ID النقطة إلى [elevationLoadingIds] أثناء الجلب،
+     * ويُزيله فور الانتهاء (سواء بنجاح أو فشل).
+     */
+    private fun fetchAndApplyElevation(id: String, lat: Double, lon: Double, type: PointType) {
+        elevationLoadingIds.add(id)
+        viewModelScope.launch {
+            val elevation = try {
+                elevationRepository.getElevation(lat, lon)
+            } catch (_: Exception) { null }
+
+            elevation?.let { elev ->
+                when (type) {
+                    PointType.CANNON -> {
+                        cannonPos = cannonPos?.copy(
+                            elevation = elev,
+                            geoPoint = cannonPos!!.geoPoint.copy(altitude = elev)
+                        )
+                    }
+                    PointType.TARGET -> {
+                        val idx = targets.indexOfFirst { it.id == id }
+                        if (idx != -1) {
+                            targets[idx] = targets[idx].copy(
+                                elevation = elev,
+                                geoPoint = targets[idx].geoPoint.copy(altitude = elev)
+                            )
+                        }
+                    }
+                    PointType.REFERENCE -> {
+                        val idx = referencePoints.indexOfFirst { it.id == id }
+                        if (idx != -1) {
+                            referencePoints[idx] = referencePoints[idx].copy(
+                                elevation = elev,
+                                geoPoint = referencePoints[idx].geoPoint.copy(altitude = elev)
+                            )
+                        }
+                    }
+                    else -> {}
+                }
+            }
+            elevationLoadingIds.remove(id)
         }
     }
 
@@ -196,61 +262,93 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
         utm: UtmPoint
     ) {
         if (point != null) {
-            // Editing existing point
+            // تعديل نقطة موجودة
             when (point) {
                 is CannonPosition -> {
-                    cannonPos = point.copy(name = name, description = description, elevation = elevation, geoPoint = geo, utmPoint = utm)
+                    val updated = point.copy(
+                        name = name, description = description,
+                        elevation = elevation,
+                        geoPoint = geo.copy(altitude = elevation),
+                        utmPoint = utm
+                    )
+                    cannonPos = updated
                     saveCannonPosition(geo.latitude, geo.longitude)
                     calculateAll()
+                    // إذا لم يُدخل المستخدم ارتفاعاً → اجلبه تلقائياً
+                    if (elevation == 0.0) fetchAndApplyElevation(updated.id, geo.latitude, geo.longitude, PointType.CANNON)
                 }
                 is TargetPosition -> {
                     val index = targets.indexOfFirst { it.id == point.id }
                     if (index != -1) {
-                        targets[index] = point.copy(name = name, description = description, elevation = elevation, geoPoint = geo, utmPoint = utm)
+                        val updated = point.copy(
+                            name = name, description = description,
+                            elevation = elevation,
+                            geoPoint = geo.copy(altitude = elevation),
+                            utmPoint = utm
+                        )
+                        targets[index] = updated
                         calculateAll()
+                        if (elevation == 0.0) fetchAndApplyElevation(updated.id, geo.latitude, geo.longitude, PointType.TARGET)
                     }
                 }
                 is ReferencePoint -> {
                     val index = referencePoints.indexOfFirst { it.id == point.id }
                     if (index != -1) {
-                        referencePoints[index] = point.copy(name = name, description = description, geoPoint = geo, utmPoint = utm)
+                        val updated = point.copy(
+                            name = name, description = description,
+                            elevation = elevation,
+                            geoPoint = geo.copy(altitude = elevation),
+                            utmPoint = utm
+                        )
+                        referencePoints[index] = updated
+                        if (elevation == 0.0) fetchAndApplyElevation(updated.id, geo.latitude, geo.longitude, PointType.REFERENCE)
                     }
                 }
             }
         } else if (type != null) {
-            // Adding new point manually
+            // إضافة نقطة يدوياً
             when (type) {
                 PointType.CANNON -> {
-                    cannonPos = CannonPosition(name = name, description = description, elevation = elevation, geoPoint = geo, utmPoint = utm)
+                    val newPoint = CannonPosition(
+                        name = name, description = description,
+                        elevation = elevation,
+                        geoPoint = geo.copy(altitude = elevation),
+                        utmPoint = utm
+                    )
+                    cannonPos = newPoint
                     saveCannonPosition(geo.latitude, geo.longitude)
                     calculateAll()
+                    if (elevation == 0.0) fetchAndApplyElevation(newPoint.id, geo.latitude, geo.longitude, PointType.CANNON)
                 }
                 PointType.TARGET -> {
                     val index = targets.size + 1
-                    targets.add(TargetPosition(
-                        id = "target_$index",
-                        name = name,
-                        description = description,
+                    val newPoint = TargetPosition(
+                        id = "target_manual_${index}_${System.currentTimeMillis()}",
+                        name = name, description = description,
                         elevation = elevation,
-                        geoPoint = geo,
+                        geoPoint = geo.copy(altitude = elevation),
                         utmPoint = utm
-                    ))
+                    )
+                    targets.add(newPoint)
                     calculateAll()
+                    if (elevation == 0.0) fetchAndApplyElevation(newPoint.id, geo.latitude, geo.longitude, PointType.TARGET)
                 }
                 PointType.REFERENCE -> {
                     val index = referencePoints.size + 1
-                    referencePoints.add(ReferencePoint(
-                        id = "ref_$index",
-                        name = name,
-                        description = description,
-                        geoPoint = geo,
+                    val newPoint = ReferencePoint(
+                        id = "ref_manual_${index}_${System.currentTimeMillis()}",
+                        name = name, description = description,
+                        elevation = elevation,
+                        geoPoint = geo.copy(altitude = elevation),
                         utmPoint = utm
-                    ))
+                    )
+                    referencePoints.add(newPoint)
+                    if (elevation == 0.0) fetchAndApplyElevation(newPoint.id, geo.latitude, geo.longitude, PointType.REFERENCE)
                 }
                 else -> {}
             }
         }
-        
+
         showEditDialog = false
         pointToEdit = null
         manualAddType = null

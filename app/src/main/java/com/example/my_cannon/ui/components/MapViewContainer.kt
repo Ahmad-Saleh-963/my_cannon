@@ -198,7 +198,13 @@ fun MapViewContainer(
             }
             
             viewModel.cannonPos?.let { cannon ->
-                val marker = rememberMarkerBitmap(MarkerShape.CIRCLE, cannon.name, Color(0xFF2E7D32), Icons.Default.GpsFixed)
+                val isLoadingElev = cannon.id in viewModel.elevationLoadingIds
+                val elevLabel = when {
+                    isLoadingElev -> "⏳ ${cannon.name}"
+                    cannon.elevation != 0.0 -> "${cannon.name}\n${String.format(Locale.US, "%.1f م", cannon.elevation)}"
+                    else -> cannon.name
+                }
+                val marker = rememberMarkerBitmap(MarkerShape.CIRCLE, elevLabel, Color(0xFF2E7D32), Icons.Default.GpsFixed)
                 PointAnnotation(point = Point.fromLngLat(cannon.geoPoint.longitude, cannon.geoPoint.latitude)) {
                     interactionsState.onLongClicked { viewModel.openEditDialog(cannon); true }
                     iconImage = IconImage(marker)
@@ -210,7 +216,13 @@ fun MapViewContainer(
             viewModel.targets.forEachIndexed { index, target ->
                 key(target.id) {
                     val targetColor = getTargetColor(index)
-                    val marker = rememberMarkerBitmap(MarkerShape.SQUARE, target.name, targetColor, Icons.Default.TrackChanges)
+                    val isLoadingElev = target.id in viewModel.elevationLoadingIds
+                    val elevLabel = when {
+                        isLoadingElev -> "⏳ ${target.name}"
+                        target.elevation != 0.0 -> "${target.name}\n${String.format(Locale.US, "%.1f م", target.elevation)}"
+                        else -> target.name
+                    }
+                    val marker = rememberMarkerBitmap(MarkerShape.SQUARE, elevLabel, targetColor, Icons.Default.TrackChanges)
                     
                     PointAnnotation(point = Point.fromLngLat(target.geoPoint.longitude, target.geoPoint.latitude)) {
                         interactionsState.onLongClicked { viewModel.openEditDialog(target); true }
@@ -255,8 +267,14 @@ fun MapViewContainer(
             viewModel.referencePoints.forEach { ref ->
                 key(ref.id) {
                     val refColor = Color(0xFF1976D2)
-                    val marker = rememberMarkerBitmap(MarkerShape.TRIANGLE, ref.name, refColor)
-                    
+                    val isLoadingElev = ref.id in viewModel.elevationLoadingIds
+                    val elevLabel = when {
+                        isLoadingElev -> "⏳ ${ref.name}"
+                        ref.elevation != 0.0 -> "${ref.name}\n${String.format(Locale.US, "%.1f م", ref.elevation)}"
+                        else -> ref.name
+                    }
+                    val marker = rememberMarkerBitmap(MarkerShape.TRIANGLE, elevLabel, refColor)
+
                     PointAnnotation(point = Point.fromLngLat(ref.geoPoint.longitude, ref.geoPoint.latitude)) {
                         interactionsState.onLongClicked { viewModel.openEditDialog(ref); true }
                         iconImage = IconImage(marker)
@@ -445,24 +463,25 @@ fun UnifiedEditDialog(
 ) {
     val point = viewModel.pointToEdit
     val type = viewModel.manualAddType
-    
+
     var name by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var elevation by remember { mutableStateOf("") }
-    
+
     var lat by remember { mutableStateOf("") }
     var lon by remember { mutableStateOf("") }
-    
+
     var easting by remember { mutableStateOf("") }
     var northing by remember { mutableStateOf("") }
 
+    // تحميل القيم الأولية عند فتح الحوار
     LaunchedEffect(point, type) {
         if (point != null) {
             when (point) {
                 is CannonPosition -> {
                     name = point.name
                     description = point.description
-                    elevation = point.elevation.toString()
+                    elevation = if (point.elevation != 0.0) String.format(Locale.US, "%.1f", point.elevation) else ""
                     lat = String.format(Locale.US, "%.7f", point.geoPoint.latitude)
                     lon = String.format(Locale.US, "%.7f", point.geoPoint.longitude)
                     easting = String.format(Locale.US, "%.2f", point.utmPoint.easting)
@@ -471,7 +490,7 @@ fun UnifiedEditDialog(
                 is TargetPosition -> {
                     name = point.name
                     description = point.description
-                    elevation = point.elevation.toString()
+                    elevation = if (point.elevation != 0.0) String.format(Locale.US, "%.1f", point.elevation) else ""
                     lat = String.format(Locale.US, "%.7f", point.geoPoint.latitude)
                     lon = String.format(Locale.US, "%.7f", point.geoPoint.longitude)
                     easting = String.format(Locale.US, "%.2f", point.utmPoint.easting)
@@ -480,12 +499,36 @@ fun UnifiedEditDialog(
                 is ReferencePoint -> {
                     name = point.name
                     description = point.description
-                    elevation = "0"
+                    elevation = if (point.elevation != 0.0) String.format(Locale.US, "%.1f", point.elevation) else ""
                     lat = String.format(Locale.US, "%.7f", point.geoPoint.latitude)
                     lon = String.format(Locale.US, "%.7f", point.geoPoint.longitude)
                     easting = String.format(Locale.US, "%.2f", point.utmPoint.easting)
                     northing = String.format(Locale.US, "%.2f", point.utmPoint.northing)
                 }
+            }
+        }
+    }
+
+    // تحديث حقل الارتفاع تلقائياً عندما ينتهي جلب الارتفاع في الخلفية
+    val pointId = when (point) {
+        is CannonPosition -> point.id
+        is TargetPosition -> point.id
+        is ReferencePoint -> point.id
+        else -> null
+    }
+    val isLoadingElev = pointId != null && pointId in viewModel.elevationLoadingIds
+
+    LaunchedEffect(isLoadingElev) {
+        // عندما ينتهي التحميل، حدّث القيمة المعروضة
+        if (!isLoadingElev && pointId != null) {
+            val freshElev: Double? = when {
+                point is CannonPosition -> viewModel.cannonPos?.elevation
+                point is TargetPosition -> viewModel.targets.firstOrNull { it.id == pointId }?.elevation
+                point is ReferencePoint -> viewModel.referencePoints.firstOrNull { it.id == pointId }?.elevation
+                else -> null
+            }
+            if (freshElev != null && freshElev != 0.0) {
+                elevation = String.format(Locale.US, "%.1f", freshElev)
             }
         }
     }
@@ -540,17 +583,23 @@ fun UnifiedEditDialog(
                     minLines = 2
                 )
 
-                if (point !is ReferencePoint && type != PointType.REFERENCE) {
-                    OutlinedTextField(
-                        value = elevation,
-                        onValueChange = { elevation = it },
-                        label = { Text("الارتفاع (م)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        leadingIcon = { Icon(Icons.Default.Height, null) }
-                    )
-                }
+                // حقل الارتفاع — يظهر لجميع أنواع النقاط
+                OutlinedTextField(
+                    value = elevation,
+                    onValueChange = { elevation = it },
+                    label = {
+                        if (isLoadingElev)
+                            Text("⏳ جارٍ جلب الارتفاع...")
+                        else
+                            Text("الارتفاع عن سطح البحر (م)")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    leadingIcon = { Icon(Icons.Default.Height, null) },
+                    enabled = !isLoadingElev,
+                    placeholder = { Text("يُجلب تلقائياً...") }
+                )
 
                 // Coordinates Section
                 EditSectionTitle("الإحداثيات (Geo)", Icons.Default.LocationOn)
