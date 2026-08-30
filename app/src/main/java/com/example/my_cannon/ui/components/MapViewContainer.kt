@@ -91,9 +91,11 @@ fun MapViewContainer(
     val carBodyBitmap = rememberIconBitmap(Icons.Default.Navigation, Color(0xFF007AFF))
     val carShadowBitmap = rememberIconBitmap(Icons.Default.Navigation, Color.Black.copy(alpha = 0.2f))
 
-    // توليد ملصقات الوقت لكافة المسارات مسبقاً لضمان الأداء
+    // توليد ملصقات الوقت لكافة المسارات مسبقاً بتنسيق عربي فصيح لمدد المسار
     val routeLabels = allRoutes.map { route ->
-        val labelText = " د ${route.durationMinutes}   -   " + String.format(Locale.US, "%.1f كم", route.distanceKm)
+        val timeStr = formatDurationArabic(route.durationMinutes)
+        val distStr = String.format(Locale.US, "%.1f كم", route.distanceKm)
+        val labelText = "$timeStr  •  $distStr"
         rememberTextBitmap(labelText, Color(0xFF004AAD))
     }
 
@@ -871,6 +873,60 @@ fun getTargetColor(index: Int): Color {
         Color(0xFF0097A7)  // Cyan
     )
     return colors[index % colors.size]
+}
+
+fun formatDurationArabic(totalMinutes: Int): String {
+    if (totalMinutes <= 0) return "أقل من دقيقة"
+    
+    val hours = totalMinutes / 60
+    val minutes = totalMinutes % 60
+
+    return when {
+        hours == 0 -> {
+            when (minutes) {
+                1 -> "دقيقة واحدة"
+                2 -> "دقيقتان"
+                in 3..10 -> "$minutes دقائق"
+                else -> "$minutes دقيقة"
+            }
+        }
+        hours == 1 -> {
+            when (minutes) {
+                0 -> "ساعة واحدة"
+                1 -> "ساعة ودقيقة"
+                2 -> "ساعة ودقيقتان"
+                in 3..10 -> "ساعة و $minutes دقائق"
+                else -> "ساعة و $minutes دقيقة"
+            }
+        }
+        hours == 2 -> {
+            when (minutes) {
+                0 -> "ساعتان"
+                1 -> "ساعتان ودقيقة"
+                2 -> "ساعتان ودقيقتان"
+                in 3..10 -> "ساعتان و $minutes دقائق"
+                else -> "ساعتان و $minutes دقيقة"
+            }
+        }
+        hours in 3..10 -> {
+            when (minutes) {
+                0 -> "$hours ساعات"
+                1 -> "$hours ساعات ودقيقة"
+                2 -> "$hours ساعات ودقيقتان"
+                in 3..10 -> "$hours ساعات و $minutes دقائق"
+                else -> "$hours ساعات و $minutes دقيقة"
+            }
+        }
+        else -> {
+            when (minutes) {
+                0 -> "$hours ساعة"
+                1 -> "$hours ساعة ودقيقة"
+                2 -> "$hours ساعة ودقيقتان"
+                in 3..10 -> "$hours ساعة و $minutes دقائق"
+                else -> "$hours ساعة و $minutes دقيقة"
+            }
+        }
+    }
 }
 
 @Composable

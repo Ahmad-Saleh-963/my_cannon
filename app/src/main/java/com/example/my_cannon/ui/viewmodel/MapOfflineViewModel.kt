@@ -310,21 +310,28 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private suspend fun searchOnlinePro(query: String, proximity: Point?): List<SearchResult> = withContext(Dispatchers.IO) {
+        val syriaDbResults = com.example.my_cannon.data.db.SyriaLocationDatabase.search(query)
+        val onlineList = mutableListOf<SearchResult>()
         try {
             val token = getApplication<Application>().getString(R.string.mapbox_access_token)
+            val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
             val types = "region,district,place,locality,neighborhood,address,poi"
-            var urlString = "https://api.mapbox.com/geocoding/v5/mapbox.places/${query.replace(" ", "%20")}.json?access_token=$token&country=sy&types=$types&limit=12&language=ar"
+            var urlString = "https://api.mapbox.com/geocoding/v5/mapbox.places/$encodedQuery.json?access_token=$token&country=sy&types=$types&limit=15&autocomplete=true&fuzzyMatch=true&language=ar"
             proximity?.let { urlString += "&proximity=${it.longitude()},${it.latitude()}" }
+
             val response = URL(urlString).readText()
             val json = JSONObject(response)
             val features = json.getJSONArray("features")
-            val list = mutableListOf<SearchResult>()
+
             for (i in 0 until features.length()) {
                 val f = features.getJSONObject(i)
                 val placeName = f.getString("place_name")
+                val text = if (f.has("text")) f.getString("text") else ""
+
                 val parts = placeName.split(",")
-                val name = parts[0].trim()
-                val context = if (parts.size > 1) parts.drop(1).joinToString(",").trim() else "سوريا"
+                val name = if (text.isNotEmpty()) text else parts[0].trim()
+                val contextText = if (parts.size > 1) parts.drop(1).joinToString(",").trim() else "سوريا"
+
                 val province = when {
                     placeName.contains("حلب") -> "محافظة حلب"
                     placeName.contains("إدلب") -> "محافظة إدلب"
@@ -333,18 +340,30 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
                     placeName.contains("حماة") -> "محافظة حماة"
                     placeName.contains("حمص") -> "محافظة حمص"
                     placeName.contains("دمشق") -> "محافظة دمشق"
+                    placeName.contains("درعا") -> "محافظة درعا"
+                    placeName.contains("السويداء") -> "محافظة السويداء"
+                    placeName.contains("القنيطرة") -> "محافظة القنيطرة"
+                    placeName.contains("دير الزور") -> "محافظة دير الزور"
+                    placeName.contains("الرقة") -> "محافظة الرقة"
+                    placeName.contains("الحسكة") -> "محافظة الحسكة"
                     else -> "سوريا"
                 }
-                list.add(SearchResult(name, context, province, Point.fromLngLat(f.getJSONArray("center").getDouble(0), f.getJSONArray("center").getDouble(1))))
+
+                val center = f.getJSONArray("center")
+                onlineList.add(SearchResult(name, contextText, province, Point.fromLngLat(center.getDouble(0), center.getDouble(1))))
             }
-            list
-        } catch (_: Exception) {
-            searchOfflinePro(query)
-        }
+        } catch (_: Exception) {}
+
+        (syriaDbResults + onlineList).distinctBy { Pair(it.name, it.province) }.take(25)
     }
 
     private fun searchOfflinePro(query: String): List<SearchResult> {
-        return _poiList.value.values.flatten().filter { it.first.contains(query, ignoreCase = true) }.take(5).map { SearchResult(it.first, "منطقة مخزنة - أوفلاين", "سوريا", it.second) }
+        val syriaDbResults = com.example.my_cannon.data.db.SyriaLocationDatabase.search(query)
+        val poiResults = _poiList.value.values.flatten()
+            .filter { it.first.contains(query, ignoreCase = true) }
+            .map { SearchResult(it.first, "نقطة تكتيكية مخزنة", "سوريا", it.second) }
+
+        return (syriaDbResults + poiResults).distinctBy { Pair(it.name, it.province) }
     }
 
     fun calculateDrivingRoute(start: Point, destination: Point) {
