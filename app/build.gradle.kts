@@ -8,11 +8,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.my_cannon"
+    namespace = "com.ahmadsaleh.map"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.example.my_cannon"
+        applicationId = "com.ahmadsaleh.map"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
