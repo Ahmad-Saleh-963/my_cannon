@@ -18,6 +18,7 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
@@ -46,6 +47,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.my_cannon.data.model.PointType
@@ -520,8 +522,8 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                     .safeDrawingPadding() // هذا السحر يمنع التداخل مع الساعة وأزرار النظام
             ) {
                 if (selectedTab == 0) {
-                    // 1. زر GPS في أسفل اليسار
-                    SmallFloatingActionButton(
+                    // 1. زر GPS الموحد الأنيق في أسفل اليسار
+                    Surface(
                         onClick = {
                             if (locationPermissionGranted) {
                                 checkAndEnableGPS()
@@ -536,19 +538,32 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                         },
                         modifier = Modifier
                             .align(Alignment.BottomStart)
-                            .padding(start = 16.dp, bottom = 64.dp), // مسافة أقل لتناسب الشريط الجديد
-                        containerColor = Color.Black.copy(alpha = 0.7f),
-                        contentColor = if (locationPermissionGranted) Color.Cyan else Color.Gray,
-                        shape = CircleShape
+                            .padding(start = 16.dp, bottom = 68.dp)
+                            .size(42.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color.Black.copy(alpha = 0.75f),
+                        border = BorderStroke(
+                            1.2.dp,
+                            if (locationPermissionGranted) Color.Cyan.copy(alpha = 0.7f) else Color.Gray.copy(alpha = 0.4f)
+                        ),
+                        tonalElevation = 6.dp,
+                        shadowElevation = 4.dp
                     ) {
-                        Icon(Icons.Default.MyLocation, contentDescription = "تحديد موقعي")
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.MyLocation,
+                                contentDescription = "تحديد موقعي",
+                                tint = if (locationPermissionGranted) Color.Cyan else Color.Gray,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
 
-                    // 2. قائمة Speed Dial في أسفل اليمين
+                    // 2. قائمة Speed Dial الزر الرئيسي الموحد في أسفل اليمين
                     SpeedDialFab(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(end = 16.dp, bottom = 64.dp), // مسافة أقل لتناسب الشريط الجديد
+                            .padding(end = 16.dp, bottom = 68.dp),
                         viewModel = viewModel,
                         currentType = viewModel.selectedPointType,
                         onNavigateToOffline = { selectedTab = 4 }
@@ -658,7 +673,10 @@ fun SpeedDialFab(
     currentType: PointType,
     onNavigateToOffline: () -> Unit
 ) {
+    val context = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
+    var showClearAllConfirmationDialog by remember { mutableStateOf(false) }
+
     val rotation by animateFloatAsState(if (expanded) 45f else 0f, label = "fab_rotation")
     
     // لون الزر حسب وضع الإضافة الحالي
@@ -668,6 +686,123 @@ fun SpeedDialFab(
         PointType.TARGET -> Color.Red
         PointType.REFERENCE -> Color.Blue
         PointType.NONE -> silverColor
+    }
+
+    if (showClearAllConfirmationDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearAllConfirmationDialog = false },
+            icon = {
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xFFFF453A).copy(alpha = 0.15f),
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.DeleteForever,
+                            contentDescription = null,
+                            tint = Color(0xFFFF453A),
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                }
+            },
+            title = {
+                Text(
+                    text = "تأكيد مسح كافة البيانات",
+                    fontWeight = FontWeight.ExtraBold,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalAlignment = Alignment.Start
+                ) {
+                    Text(
+                        text = "سيتم مسح كافة البيانات النقاط والجلسة الحالية بشكل نهائي ولن يمكنك استعادتها:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Surface(
+                        color = Color(0xFFFF453A).copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, Color(0xFFFF453A).copy(alpha = 0.3f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.GpsFixed, contentDescription = null, tint = Color.Green, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = if (viewModel.cannonPos != null) "المربط الرئيسي: ${viewModel.cannonPos?.name}" else "المربط الرئيسي: غير محدد",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.TrackChanges, contentDescription = null, tint = Color.Red, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "قائمة الأهداف: ${viewModel.targets.size} هدف محدد",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Flag, contentDescription = null, tint = Color.Blue, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "نقاط العلام: ${viewModel.referencePoints.size} نقطة علام",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = "هل أنت أصلًا متأكد من استمرار عملية المسح النهائي؟",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFF453A)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.clearPoints()
+                        showClearAllConfirmationDialog = false
+                        Toast.makeText(context, "✅ تم مسح كافة البيانات والجلسة بنجاح", Toast.LENGTH_LONG).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFFF453A),
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("نعم، مسح الكل", fontWeight = FontWeight.ExtraBold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showClearAllConfirmationDialog = false },
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("إلغاء والاحتفاظ بالبيانات")
+                }
+            }
+        )
     }
 
     Column(
@@ -748,21 +883,33 @@ fun SpeedDialFab(
                     icon = Icons.Default.DeleteSweep,
                     color = Color.DarkGray,
                     onClick = {
-                        viewModel.clearPoints()
+                        showClearAllConfirmationDialog = true
                         expanded = false
                     }
                 )
             }
         }
 
-        // الزر الرئيسي (+)
-        FloatingActionButton(
+        // الزر الرئيسي الموحد (+)
+        Surface(
             onClick = { expanded = !expanded },
-            containerColor = fabColor,
-            contentColor = Color.White,
-            modifier = Modifier.rotate(rotation)
+            modifier = Modifier
+                .size(42.dp)
+                .rotate(rotation),
+            shape = RoundedCornerShape(12.dp),
+            color = Color.Black.copy(alpha = 0.75f),
+            border = BorderStroke(1.2.dp, fabColor.copy(alpha = 0.8f)),
+            tonalElevation = 6.dp,
+            shadowElevation = 4.dp
         ) {
-            Icon(if (expanded) Icons.Default.Close else Icons.Default.Add, contentDescription = "فتح القائمة")
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = if (expanded) Icons.Default.Close else Icons.Default.Add,
+                    contentDescription = "فتح القائمة",
+                    tint = fabColor,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
         }
     }
 }
@@ -779,38 +926,40 @@ fun SpeedDialItem(
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.padding(end = 4.dp)
+        modifier = Modifier.padding(end = 2.dp)
     ) {
         Surface(
-            color = Color.Black.copy(alpha = 0.7f),
+            color = Color.Black.copy(alpha = 0.8f),
             shape = RoundedCornerShape(8.dp),
-            modifier = Modifier.padding(horizontal = 4.dp)
+            border = BorderStroke(0.5.dp, color.copy(alpha = 0.4f))
         ) {
             Text(
                 text = label,
                 color = Color.White,
                 style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
             )
         }
         
         Surface(
             modifier = Modifier
-                .size(44.dp)
+                .size(38.dp)
                 .combinedClickable(
                     onClick = onClick,
                     onLongClick = onLongClick
                 ),
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp,
-            shadowElevation = 4.dp
+            shape = RoundedCornerShape(10.dp),
+            color = Color.Black.copy(alpha = 0.75f),
+            border = BorderStroke(1.dp, color.copy(alpha = 0.6f)),
+            tonalElevation = 4.dp,
+            shadowElevation = 3.dp
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     icon, 
                     contentDescription = null, 
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(18.dp),
                     tint = color
                 )
             }

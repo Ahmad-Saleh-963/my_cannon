@@ -404,25 +404,33 @@ fun MapViewContainer(
             )
         }
 
-        // زر قفل الملاحة الاحترافي (يظهر عند وجود مسار)
-        if (routeGeometry != null) {
-            Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-                FilledIconButton(
-                    onClick = { isNavLocked = !isNavLocked },
-                    modifier = Modifier
-                        .align(Alignment.TopEnd) // وضعه في الجهة المقابلة للبوصلة (أعلى اليمين)
-                        .padding(top = 48.dp, end = 16.dp) // نفس مستوى ارتفاع البوصلة
-                        .size(48.dp),
-                    colors = IconButtonDefaults.filledIconButtonColors(
-                        containerColor = if (isNavLocked) Color(0xFF0A84FF) else Color.Black.copy(alpha = 0.7f),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
+        // زر تتبع القيادة وقفل الملاحة الموحد مقابل البوصلة مباشرةً
+        Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+            Surface(
+                onClick = {
+                    if (locationPermissionGranted) {
+                        isNavLocked = !isNavLocked
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 48.dp, end = 16.dp)
+                    .size(42.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = if (isNavLocked) Color(0xFF0A84FF) else Color.Black.copy(alpha = 0.75f),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.2.dp,
+                    if (isNavLocked) Color(0xFF30D158) else Color.White.copy(alpha = 0.35f)
+                ),
+                tonalElevation = 6.dp,
+                shadowElevation = 4.dp
+            ) {
+                Box(contentAlignment = Alignment.Center) {
                     Icon(
-                        imageVector = Icons.Default.Navigation, // أيقونة السهم في كلتا الحالتين كما طلبت
-                        contentDescription = null,
-                        modifier = Modifier.size(24.dp)
+                        imageVector = Icons.Default.Navigation,
+                        contentDescription = "تتبع القيادة",
+                        tint = if (isNavLocked) Color.White else Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
@@ -433,10 +441,10 @@ fun MapViewContainer(
 @Composable
 fun CardinalDirectionsOverlay() {
     Box(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("N", Modifier.align(Alignment.TopCenter).padding(top = 40.dp), color = Color.White.copy(alpha = 0.5f), fontWeight = FontWeight.Bold)
-        Text("S", Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp), color = Color.White.copy(alpha = 0.5f), fontWeight = FontWeight.Bold)
-        Text("E", Modifier.align(Alignment.CenterEnd), color = Color.White.copy(alpha = 0.5f), fontWeight = FontWeight.Bold)
-        Text("W", Modifier.align(Alignment.CenterStart), color = Color.White.copy(alpha = 0.5f), fontWeight = FontWeight.Bold)
+        Text("N", Modifier.align(Alignment.TopCenter).padding(top = 48.dp), color = Color.White.copy(alpha = 0.6f), fontWeight = FontWeight.Bold)
+        Text("S", Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp), color = Color.White.copy(alpha = 0.6f), fontWeight = FontWeight.Bold)
+        Text("E", Modifier.align(Alignment.CenterEnd), color = Color.White.copy(alpha = 0.6f), fontWeight = FontWeight.Bold)
+        Text("W", Modifier.align(Alignment.CenterStart), color = Color.White.copy(alpha = 0.6f), fontWeight = FontWeight.Bold)
     }
 }
 
