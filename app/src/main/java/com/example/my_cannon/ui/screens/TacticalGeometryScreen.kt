@@ -147,8 +147,9 @@ fun TacticalCanvas(
             val tUtm = target.utmPoint
             val tPos = toCanvas((tUtm.easting - cannonUtm.easting).toFloat(), (tUtm.northing - cannonUtm.northing).toFloat())
             
-            // Connection Line
-            drawLine(TacticalRed, batteryPos, tPos, strokeWidth = 5f)
+            // Connection Line - عريض ودائري ومحدد باللون الداكن
+            drawLine(Color.Black.copy(alpha = 0.5f), batteryPos, tPos, strokeWidth = 14f, cap = StrokeCap.Round)
+            drawLine(TacticalRed, batteryPos, tPos, strokeWidth = 9f, cap = StrokeCap.Round)
             
             // Distance Label
             val dist = sqrt((tUtm.easting - cannonUtm.easting).pow(2.0) + (tUtm.northing - cannonUtm.northing).pow(2.0))
@@ -160,14 +161,15 @@ fun TacticalCanvas(
             drawLabel(textMeasurer, String.format(Locale.US, "T%d Az: %.1f°", index + 1, az), batteryPos + Offset(40f, -40f - (20f * index)), TacticalRed, isBackground = true)
             
             // Projections to Axes
-            drawLine(TacticalRed.copy(alpha = 0.6f), tPos, Offset(batteryPos.x, tPos.y), pathEffect = dashPathEffect)
-            drawLine(TacticalRed.copy(alpha = 0.6f), tPos, Offset(tPos.x, batteryPos.y), pathEffect = dashPathEffect)
+            drawLine(TacticalRed.copy(alpha = 0.6f), tPos, Offset(batteryPos.x, tPos.y), strokeWidth = 3f, cap = StrokeCap.Round, pathEffect = dashPathEffect)
+            drawLine(TacticalRed.copy(alpha = 0.6f), tPos, Offset(tPos.x, batteryPos.y), strokeWidth = 3f, cap = StrokeCap.Round, pathEffect = dashPathEffect)
         }
 
         viewModel.referencePoints.forEachIndexed { index, ref ->
             val utm = ref.utmPoint
             val rPos = toCanvas((utm.easting - cannonUtm.easting).toFloat(), (utm.northing - cannonUtm.northing).toFloat())
-            drawLine(TacticalBlue, batteryPos, rPos, strokeWidth = 3f)
+            drawLine(Color.Black.copy(alpha = 0.4f), batteryPos, rPos, strokeWidth = 11f, cap = StrokeCap.Round)
+            drawLine(TacticalBlue, batteryPos, rPos, strokeWidth = 7f, cap = StrokeCap.Round)
             
             val dist = sqrt((utm.easting - cannonUtm.easting).pow(2.0) + (utm.northing - cannonUtm.northing).pow(2.0))
             drawLabel(textMeasurer, String.format(Locale.US, "R%d: %.0fm", index + 1, dist), (batteryPos + rPos) / 2f, TacticalBlue, isBackground = true)

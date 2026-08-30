@@ -1,28 +1,38 @@
 package com.example.my_cannon.ui.viewmodel
 
+import android.app.Application
+import android.content.Context
+import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
-import android.app.Application
+import androidx.lifecycle.viewModelScope
+import com.example.my_cannon.data.db.AppDatabase
+import com.example.my_cannon.data.io.ImportResult
 import com.example.my_cannon.data.model.*
+import com.example.my_cannon.data.repository.PointsRepository
 import com.example.my_cannon.domain.calculator.ArtilleryCalculator
 import com.example.my_cannon.domain.calculator.UtmConverter
 import com.example.my_cannon.domain.elevation.ElevationRepository
 import com.example.my_cannon.domain.elevation.ElevationRepositoryImpl
-import java.util.Locale
-import android.content.Context
-import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 class CannonViewModel(application: Application) : AndroidViewModel(application) {
-    private val sharedPrefs: SharedPreferences = application.getSharedPreferences("cannon_prefs", Context.MODE_PRIVATE)
 
-    // مستودع الارتفاع — يُهيَّأ بمجرد توفر التوكن من الموارد
+    // ─── SharedPreferences (للموقع الأخير فقط) ───────────────────────────────
+    private val sharedPrefs: SharedPreferences =
+        application.getSharedPreferences("cannon_prefs", Context.MODE_PRIVATE)
+
+    // ─── Repository ───────────────────────────────────────────────────────────
+    private val db = AppDatabase.getInstance(application)
+    val pointsRepository = PointsRepository(db)
+
+    // ─── مستودع الارتفاع ──────────────────────────────────────────────────────
     private val elevationRepository: ElevationRepository by lazy {
         ElevationRepositoryImpl(
             mapboxToken = application.getString(
@@ -31,69 +41,86 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
-    /**
-     * IDs النقاط التي يجري الآن جلب ارتفاعها.
-     * يُستخدم لعرض مؤشر التحميل في الـ UI.
-     */
+    /** IDs النقاط التي يجري الآن جلب ارتفاعها */
     val elevationLoadingIds = mutableStateListOf<String>()
 
-    // حالة المربط
+    // ─── حالة الـ UI ──────────────────────────────────────────────────────────
     var cannonPos by mutableStateOf<CannonPosition?>(null)
         private set
 
-    // قائمة الأهداف
     val targets = mutableStateListOf<TargetPosition>()
-
-    // نقاط العلام
     val referencePoints = mutableStateListOf<ReferencePoint>()
 
-    // معطيات الرمي (الباليستية)
     var ballisticParams by mutableStateOf(BallisticParams())
-
-    // نوع النقطة التي يتم اختيارها حالياً من الخريطة
     var selectedPointType by mutableStateOf(PointType.NONE)
-
-    // حالة حوار الإدخال اليدوي
-    var showEditDialog by mutableStateOf(value = false)
-    var pointToEdit by mutableStateOf<Any?>(null) // CannonPosition, TargetPosition, or ReferencePoint
+    var showEditDialog by mutableStateOf(false)
+    var pointToEdit by mutableStateOf<Any?>(null)
     var manualAddType by mutableStateOf<PointType?>(null)
 
-    // نتائج الحسابات (للهدف الأول للتوافق أو إزالتها إذا استبدلت بالكامل)
     var mainResult by mutableStateOf<CalculationResult?>(null)
         private set
 
+    // ─── حالة الاستيراد ───────────────────────────────────────────────────────
+    /** نتيجة الاستيراد الأخيرة — تُستخدم لعرض حوار التأكيد في الـ UI */
+    var pendingImport by mutableStateOf<ImportResult.Success?>(null)
+
+    // ─── أحداث التنقل ────────────────────────────────────────────────────────
     private val _cameraMoveEvent = MutableSharedFlow<GeoPoint>()
     val cameraMoveEvent = _cameraMoveEvent.asSharedFlow()
 
     fun moveToLocation(geoPoint: GeoPoint) {
+        viewModelScope.launch { _cameraMoveEvent.emit(geoPoint) }
+    }
+
+    // ─── تهيئة ───────────────────────────────────────────────────────────────
+    init {
+        collectFromDatabase()
+    }
+
+    /**
+     * يستمع لتغييرات قاعدة البيانات ويُحدِّث الـ UI تلقائياً.
+     * يقوم بمزامنة أولية واحدة من SharedPrefs إلى Room إذا وُجد مربط قديم.
+     */
+    private fun collectFromDatabase() {
         viewModelScope.launch {
-            _cameraMoveEvent.emit(geoPoint)
+            pointsRepository.observeCannon().collect { dbCannon ->
+                if (dbCannon == null) {
+                    // محاولة استعادة المربط من SharedPrefs (للتوافق مع النسخ القديمة)
+                    migrateCannonFromPrefs()
+                } else {
+                    cannonPos = dbCannon
+                    calculateAll()
+                }
+            }
+        }
+        viewModelScope.launch {
+            pointsRepository.observeTargets().collect { list ->
+                targets.clear()
+                targets.addAll(list)
+                calculateAll()
+            }
+        }
+        viewModelScope.launch {
+            pointsRepository.observeReferencePoints().collect { list ->
+                referencePoints.clear()
+                referencePoints.addAll(list)
+            }
         }
     }
 
-    init {
-        loadCannonPosition()
-    }
-
-    private fun loadCannonPosition() {
+    /** يُهاجر بيانات المربط القديمة من SharedPrefs إلى Room مرة واحدة */
+    private fun migrateCannonFromPrefs() {
         val lat = sharedPrefs.getFloat("cannon_lat", -1f)
         val lon = sharedPrefs.getFloat("cannon_lon", -1f)
         if (lat != -1f && lon != -1f) {
             val geo = GeoPoint(lat.toDouble(), lon.toDouble())
             val utm = UtmConverter.fromGeoToUtm(geo)
-            cannonPos = CannonPosition(geoPoint = geo, utmPoint = utm)
-            calculateAll()
+            val cannon = CannonPosition(geoPoint = geo, utmPoint = utm)
+            viewModelScope.launch { pointsRepository.saveCannon(cannon) }
         }
     }
 
-    fun saveCannonPosition(lat: Double, lon: Double) {
-        sharedPrefs.edit().apply {
-            putFloat("cannon_lat", lat.toFloat())
-            putFloat("cannon_lon", lon.toFloat())
-            apply()
-        }
-    }
-
+    // ─── الموقع ───────────────────────────────────────────────────────────────
     fun saveLastLocation(lat: Double, lon: Double) {
         sharedPrefs.edit().apply {
             putFloat("last_lat", lat.toFloat())
@@ -109,6 +136,7 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
         return Pair(lat.toDouble(), lon.toDouble())
     }
 
+    // ─── إضافة نقطة من الخريطة ───────────────────────────────────────────────
     fun updatePointFromMap(lat: Double, lon: Double) {
         if (selectedPointType == PointType.NONE) return
 
@@ -119,7 +147,9 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
             PointType.CANNON -> {
                 val point = CannonPosition(geoPoint = geo, utmPoint = utm)
                 cannonPos = point
-                saveCannonPosition(lat, lon)
+                viewModelScope.launch { pointsRepository.saveCannon(point) }
+                // حفظ SharedPrefs للتوافق
+                sharedPrefs.edit().putFloat("cannon_lat", lat.toFloat()).putFloat("cannon_lon", lon.toFloat()).apply()
                 calculateAll()
                 fetchAndApplyElevation(point.id, lat, lon, PointType.CANNON)
             }
@@ -128,11 +158,9 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
                 val newTarget = TargetPosition(
                     id = String.format(Locale.US, "target_%d_%d", index, System.currentTimeMillis()),
                     name = String.format(Locale.US, "الهدف %d", index),
-                    geoPoint = geo,
-                    utmPoint = utm
+                    geoPoint = geo, utmPoint = utm
                 )
-                targets.add(newTarget)
-                calculateAll()
+                viewModelScope.launch { pointsRepository.saveTarget(newTarget) }
                 fetchAndApplyElevation(newTarget.id, lat, lon, PointType.TARGET)
             }
             PointType.REFERENCE -> {
@@ -140,52 +168,52 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
                 val newRef = ReferencePoint(
                     id = String.format(Locale.US, "ref_%d_%d", index, System.currentTimeMillis()),
                     name = String.format(Locale.US, "نقطة علام %d", index),
-                    geoPoint = geo,
-                    utmPoint = utm
+                    geoPoint = geo, utmPoint = utm
                 )
-                referencePoints.add(newRef)
+                viewModelScope.launch { pointsRepository.saveReferencePoint(newRef) }
                 fetchAndApplyElevation(newRef.id, lat, lon, PointType.REFERENCE)
             }
             else -> {}
         }
     }
 
-    /**
-     * يجلب الارتفاع في الخلفية ويُحدِّث النقطة المعنية تلقائياً.
-     * يُضيف ID النقطة إلى [elevationLoadingIds] أثناء الجلب،
-     * ويُزيله فور الانتهاء (سواء بنجاح أو فشل).
-     */
+    // ─── جلب الارتفاع تلقائياً ────────────────────────────────────────────────
     private fun fetchAndApplyElevation(id: String, lat: Double, lon: Double, type: PointType) {
         elevationLoadingIds.add(id)
         viewModelScope.launch {
-            val elevation = try {
-                elevationRepository.getElevation(lat, lon)
-            } catch (_: Exception) { null }
+            val elevation = try { elevationRepository.getElevation(lat, lon) } catch (_: Exception) { null }
 
             elevation?.let { elev ->
                 when (type) {
                     PointType.CANNON -> {
-                        cannonPos = cannonPos?.copy(
+                        val updated = cannonPos?.copy(
                             elevation = elev,
                             geoPoint = cannonPos!!.geoPoint.copy(altitude = elev)
                         )
+                        if (updated != null) {
+                            cannonPos = updated
+                            pointsRepository.saveCannon(updated)
+                        }
                     }
                     PointType.TARGET -> {
                         val idx = targets.indexOfFirst { it.id == id }
                         if (idx != -1) {
-                            targets[idx] = targets[idx].copy(
+                            val updated = targets[idx].copy(
                                 elevation = elev,
                                 geoPoint = targets[idx].geoPoint.copy(altitude = elev)
                             )
+                            pointsRepository.saveTarget(updated)
+                            // سيُحدَّث الـ UI تلقائياً عبر Flow
                         }
                     }
                     PointType.REFERENCE -> {
                         val idx = referencePoints.indexOfFirst { it.id == id }
                         if (idx != -1) {
-                            referencePoints[idx] = referencePoints[idx].copy(
+                            val updated = referencePoints[idx].copy(
                                 elevation = elev,
                                 geoPoint = referencePoints[idx].geoPoint.copy(altitude = elev)
                             )
+                            pointsRepository.saveReferencePoint(updated)
                         }
                     }
                     else -> {}
@@ -195,6 +223,7 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // ─── الحسابات ─────────────────────────────────────────────────────────────
     private fun calculateAll() {
         val c = cannonPos ?: return
         if (targets.isNotEmpty()) {
@@ -214,44 +243,32 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
 
     fun calculateReading(targetRes: CalculationResult, ref: ReferencePoint): ReadingResult? {
         val refRes = getRefResult(ref) ?: return null
-        
         val azT = targetRes.azimuthMils6000
         val azR = refRes.azimuthMils6000
-        
         val isPlus = azT < 3000.0
         val operation = if (isPlus) "+" else "-"
         val baseValue = if (isPlus) azT + 3000.0 else azT - 3000.0
-        
         val rawResult = baseValue - azR
-        
-        // Normalize to [0, 6000]
         var finalReading = rawResult
         while (finalReading < 0) finalReading += 6000.0
         while (finalReading >= 6000) finalReading -= 6000.0
-        
         return ReadingResult(
-            refName = ref.name,
-            targetAzMil = azT,
-            refAzMil = azR,
-            baseValue = baseValue,
-            operation = operation,
-            result = rawResult,
-            finalReading = finalReading
+            refName = ref.name, targetAzMil = azT, refAzMil = azR,
+            baseValue = baseValue, operation = operation,
+            result = rawResult, finalReading = finalReading
         )
     }
 
+    // ─── مسح الكل ─────────────────────────────────────────────────────────────
     fun clearPoints() {
-        cannonPos = null
-        targets.clear()
-        referencePoints.clear()
-        mainResult = null
-        sharedPrefs.edit()?.apply {
-            remove("cannon_lat")
-            remove("cannon_lon")
-            apply()
+        viewModelScope.launch {
+            pointsRepository.deleteAll()
+            mainResult = null
+            sharedPrefs.edit().remove("cannon_lat").remove("cannon_lon").apply()
         }
     }
 
+    // ─── تحديث/إضافة نقطة كاملة ──────────────────────────────────────────────
     fun updatePointFull(
         point: Any?,
         type: PointType?,
@@ -262,130 +279,131 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
         utm: UtmPoint
     ) {
         if (point != null) {
-            // تعديل نقطة موجودة
             when (point) {
                 is CannonPosition -> {
                     val updated = point.copy(
-                        name = name, description = description,
-                        elevation = elevation,
-                        geoPoint = geo.copy(altitude = elevation),
-                        utmPoint = utm
+                        name = name, description = description, elevation = elevation,
+                        geoPoint = geo.copy(altitude = elevation), utmPoint = utm
                     )
                     cannonPos = updated
-                    saveCannonPosition(geo.latitude, geo.longitude)
+                    viewModelScope.launch { pointsRepository.saveCannon(updated) }
+                    sharedPrefs.edit().putFloat("cannon_lat", geo.latitude.toFloat()).putFloat("cannon_lon", geo.longitude.toFloat()).apply()
                     calculateAll()
-                    // إذا لم يُدخل المستخدم ارتفاعاً → اجلبه تلقائياً
                     if (elevation == 0.0) fetchAndApplyElevation(updated.id, geo.latitude, geo.longitude, PointType.CANNON)
                 }
                 is TargetPosition -> {
-                    val index = targets.indexOfFirst { it.id == point.id }
-                    if (index != -1) {
-                        val updated = point.copy(
-                            name = name, description = description,
-                            elevation = elevation,
-                            geoPoint = geo.copy(altitude = elevation),
-                            utmPoint = utm
-                        )
-                        targets[index] = updated
-                        calculateAll()
-                        if (elevation == 0.0) fetchAndApplyElevation(updated.id, geo.latitude, geo.longitude, PointType.TARGET)
-                    }
+                    val updated = point.copy(
+                        name = name, description = description, elevation = elevation,
+                        geoPoint = geo.copy(altitude = elevation), utmPoint = utm
+                    )
+                    viewModelScope.launch { pointsRepository.saveTarget(updated) }
+                    if (elevation == 0.0) fetchAndApplyElevation(updated.id, geo.latitude, geo.longitude, PointType.TARGET)
                 }
                 is ReferencePoint -> {
-                    val index = referencePoints.indexOfFirst { it.id == point.id }
-                    if (index != -1) {
-                        val updated = point.copy(
-                            name = name, description = description,
-                            elevation = elevation,
-                            geoPoint = geo.copy(altitude = elevation),
-                            utmPoint = utm
-                        )
-                        referencePoints[index] = updated
-                        if (elevation == 0.0) fetchAndApplyElevation(updated.id, geo.latitude, geo.longitude, PointType.REFERENCE)
-                    }
+                    val updated = point.copy(
+                        name = name, description = description, elevation = elevation,
+                        geoPoint = geo.copy(altitude = elevation), utmPoint = utm
+                    )
+                    viewModelScope.launch { pointsRepository.saveReferencePoint(updated) }
+                    if (elevation == 0.0) fetchAndApplyElevation(updated.id, geo.latitude, geo.longitude, PointType.REFERENCE)
                 }
             }
         } else if (type != null) {
-            // إضافة نقطة يدوياً
             when (type) {
                 PointType.CANNON -> {
                     val newPoint = CannonPosition(
-                        name = name, description = description,
-                        elevation = elevation,
-                        geoPoint = geo.copy(altitude = elevation),
-                        utmPoint = utm
+                        name = name, description = description, elevation = elevation,
+                        geoPoint = geo.copy(altitude = elevation), utmPoint = utm
                     )
                     cannonPos = newPoint
-                    saveCannonPosition(geo.latitude, geo.longitude)
+                    viewModelScope.launch { pointsRepository.saveCannon(newPoint) }
+                    sharedPrefs.edit().putFloat("cannon_lat", geo.latitude.toFloat()).putFloat("cannon_lon", geo.longitude.toFloat()).apply()
                     calculateAll()
                     if (elevation == 0.0) fetchAndApplyElevation(newPoint.id, geo.latitude, geo.longitude, PointType.CANNON)
                 }
                 PointType.TARGET -> {
-                    val index = targets.size + 1
                     val newPoint = TargetPosition(
-                        id = "target_manual_${index}_${System.currentTimeMillis()}",
-                        name = name, description = description,
-                        elevation = elevation,
-                        geoPoint = geo.copy(altitude = elevation),
-                        utmPoint = utm
+                        id = "target_manual_${targets.size + 1}_${System.currentTimeMillis()}",
+                        name = name, description = description, elevation = elevation,
+                        geoPoint = geo.copy(altitude = elevation), utmPoint = utm
                     )
-                    targets.add(newPoint)
-                    calculateAll()
+                    viewModelScope.launch { pointsRepository.saveTarget(newPoint) }
                     if (elevation == 0.0) fetchAndApplyElevation(newPoint.id, geo.latitude, geo.longitude, PointType.TARGET)
                 }
                 PointType.REFERENCE -> {
-                    val index = referencePoints.size + 1
                     val newPoint = ReferencePoint(
-                        id = "ref_manual_${index}_${System.currentTimeMillis()}",
-                        name = name, description = description,
-                        elevation = elevation,
-                        geoPoint = geo.copy(altitude = elevation),
-                        utmPoint = utm
+                        id = "ref_manual_${referencePoints.size + 1}_${System.currentTimeMillis()}",
+                        name = name, description = description, elevation = elevation,
+                        geoPoint = geo.copy(altitude = elevation), utmPoint = utm
                     )
-                    referencePoints.add(newPoint)
+                    viewModelScope.launch { pointsRepository.saveReferencePoint(newPoint) }
                     if (elevation == 0.0) fetchAndApplyElevation(newPoint.id, geo.latitude, geo.longitude, PointType.REFERENCE)
                 }
                 else -> {}
             }
         }
-
         showEditDialog = false
         pointToEdit = null
         manualAddType = null
     }
 
+    // ─── حذف نقطة ─────────────────────────────────────────────────────────────
     fun deletePoint(point: Any) {
         when (point) {
             is CannonPosition -> {
-                cannonPos = null
-                sharedPrefs.edit()?.apply {
-                    remove("cannon_lat")
-                    remove("cannon_lon")
-                    apply()
+                viewModelScope.launch {
+                    pointsRepository.deleteCannon()
+                    mainResult = null
+                    sharedPrefs.edit().remove("cannon_lat").remove("cannon_lon").apply()
                 }
-                mainResult = null
             }
             is TargetPosition -> {
-                targets.removeIf { it.id == point.id }
-                calculateAll()
+                viewModelScope.launch { pointsRepository.deleteTarget(point.id) }
             }
             is ReferencePoint -> {
-                referencePoints.removeIf { it.id == point.id }
+                viewModelScope.launch { pointsRepository.deleteReferencePoint(point.id) }
             }
         }
         showEditDialog = false
         pointToEdit = null
     }
 
+    // ─── الاستيراد ────────────────────────────────────────────────────────────
+    /**
+     * يُطبِّق جلسة مُستوردة على قاعدة البيانات.
+     * [replaceAll] = true → يمسح الموجود ويستبدله
+     * [replaceAll] = false → يُضيف فوق الموجود
+     */
+    fun applyImport(result: ImportResult.Success, replaceAll: Boolean) {
+        viewModelScope.launch {
+            if (replaceAll) pointsRepository.deleteAll()
+
+            result.cannon?.let { pointsRepository.saveCannon(it) }
+
+            val baseTime = System.currentTimeMillis()
+            result.targets.forEachIndexed { i, t ->
+                pointsRepository.saveTarget(t, baseTime + i)
+            }
+            result.referencePoints.forEachIndexed { i, r ->
+                pointsRepository.saveReferencePoint(r, baseTime + 10_000 + i)
+            }
+            pendingImport = null
+        }
+    }
+
+    fun cancelImport() { pendingImport = null }
+
+    // ─── حوارات التعديل ───────────────────────────────────────────────────────
     fun openEditDialog(point: Any) {
-        pointToEdit = point
-        manualAddType = null
-        showEditDialog = true
+        pointToEdit = point; manualAddType = null; showEditDialog = true
     }
 
     fun openManualAddDialog(type: PointType) {
-        manualAddType = type
-        pointToEdit = null
-        showEditDialog = true
+        manualAddType = type; pointToEdit = null; showEditDialog = true
+    }
+
+    // ─── للتوافق مع fetchAndSaveLocation في MainActivity ─────────────────────
+    fun saveCannonPosition(lat: Double, lon: Double) {
+        sharedPrefs.edit().putFloat("cannon_lat", lat.toFloat()).putFloat("cannon_lon", lon.toFloat()).apply()
     }
 }

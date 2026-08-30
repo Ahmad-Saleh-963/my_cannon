@@ -43,18 +43,18 @@ object ArtilleryCalculator {
          * 4. الربع الرابع رياضياً (X+, Y-) -> الربع الثالث هنا.
          */
         val quadrant = when {
-            isXIncreasing && isYIncreasing -> Quadrant.FIRST     // Q1 Math -> Q1 Tactical
-            !isXIncreasing && isYIncreasing -> Quadrant.FOURTH   // Q2 Math -> Q4 Tactical
-            !isXIncreasing && !isYIncreasing -> Quadrant.SECOND  // Q3 Math -> Q2 Tactical
-            else -> Quadrant.THIRD                               // Q4 Math -> Q3 Tactical
+            isXIncreasing && isYIncreasing -> Quadrant.FIRST     // X+, Y+ (الربع الأول: أعلى اليمين)
+            isXIncreasing && !isYIncreasing -> Quadrant.SECOND    // X+, Y- (الربع الثاني: أسفل اليمين)
+            !isXIncreasing && !isYIncreasing -> Quadrant.THIRD   // X-, Y- (الربع الثالث: أسفل اليسار)
+            else -> Quadrant.FOURTH                              // X-, Y+ (الربع الرابع: أعلى اليسار)
         }
 
-        // 4. حساب السمت (Azimuth) بناءً على قوانين الربع المحددة من المستخدم
+        // 4. حساب السمت (Azimuth) بناءً على قوانين الربع العسكرية
         val azimuth = when (quadrant) {
             Quadrant.FIRST -> thetaDeg
-            Quadrant.SECOND -> thetaDeg - 180.0
-            Quadrant.THIRD -> thetaDeg + 180.0
-            Quadrant.FOURTH -> thetaDeg - 360.0
+            Quadrant.SECOND -> 180.0 - thetaDeg
+            Quadrant.THIRD -> 180.0 + thetaDeg
+            Quadrant.FOURTH -> 360.0 - thetaDeg
         }
 
         // 5. حساب المسافة الوترية المباشرة (Euclidean Distance) بدقة عالية جداً

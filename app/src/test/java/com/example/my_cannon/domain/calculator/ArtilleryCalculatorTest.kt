@@ -19,38 +19,38 @@ class ArtilleryCalculatorTest {
     }
 
     @Test
-    fun testQuadrant2_SouthWest() {
-        // Battery at (0,0), Target at (-100, -100) -> X decreases, Y decreases -> User says Q2
-        val battery = UtmPoint(0.0, 0.0)
-        val target = UtmPoint(-100.0, -100.0)
-        val result = ArtilleryCalculator.calculateBetweenPoints(battery, target)
-        
-        assertEquals(Quadrant.SECOND, result.quadrant)
-        // User Q2 Formula: theta - 180. theta = 45. 45 - 180 = -135
-        assertEquals(-135.0, result.azimuth, 0.01)
-    }
-
-    @Test
-    fun testQuadrant3_SouthEast() {
-        // Battery at (0,0), Target at (100, -100) -> X increases, Y decreases -> User says Q3
+    fun testQuadrant2_SouthEast() {
+        // Battery at (0,0), Target at (100, -100) -> X+, Y- -> Q2
         val battery = UtmPoint(0.0, 0.0)
         val target = UtmPoint(100.0, -100.0)
         val result = ArtilleryCalculator.calculateBetweenPoints(battery, target)
         
+        assertEquals(Quadrant.SECOND, result.quadrant)
+        // Q2 Formula: 180 - theta = 180 - 45 = 135
+        assertEquals(135.0, result.azimuth, 0.01)
+    }
+
+    @Test
+    fun testQuadrant3_SouthWest() {
+        // Battery at (0,0), Target at (-100, -100) -> X-, Y- -> Q3
+        val battery = UtmPoint(0.0, 0.0)
+        val target = UtmPoint(-100.0, -100.0)
+        val result = ArtilleryCalculator.calculateBetweenPoints(battery, target)
+        
         assertEquals(Quadrant.THIRD, result.quadrant)
-        // User Q3 Formula: theta + 180. theta = 45. 45 + 180 = 225
+        // Q3 Formula: 180 + theta = 180 + 45 = 225
         assertEquals(225.0, result.azimuth, 0.01)
     }
 
     @Test
     fun testQuadrant4_NorthWest() {
-        // Battery at (0,0), Target at (-100, 100) -> X decreases, Y increases -> User says Q4
+        // Battery at (0,0), Target at (-100, 100) -> X-, Y+ -> Q4
         val battery = UtmPoint(0.0, 0.0)
         val target = UtmPoint(-100.0, 100.0)
         val result = ArtilleryCalculator.calculateBetweenPoints(battery, target)
         
         assertEquals(Quadrant.FOURTH, result.quadrant)
-        // User Q4 Formula: theta - 360. theta = 45. 45 - 360 = -315
-        assertEquals(-315.0, result.azimuth, 0.01)
+        // Q4 Formula: 360 - theta = 360 - 45 = 315
+        assertEquals(315.0, result.azimuth, 0.01)
     }
 }

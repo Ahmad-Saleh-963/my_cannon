@@ -40,6 +40,7 @@ import com.mapbox.maps.extension.compose.annotation.generated.PointAnnotation
 import com.mapbox.maps.extension.compose.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.extension.compose.style.MapStyle
 import com.mapbox.maps.extension.style.layers.properties.generated.IconAnchor
+import com.mapbox.maps.extension.style.layers.properties.generated.LineJoin
 import androidx.compose.ui.platform.LocalConfiguration
 import com.example.my_cannon.ui.viewmodel.RouteInfo
 import com.mapbox.maps.plugin.PuckBearing
@@ -236,22 +237,29 @@ fun MapViewContainer(
                         val end = Point.fromLngLat(target.geoPoint.longitude, target.geoPoint.latitude)
                         val linePoints = listOf(start, end)
                         
-                        // 1. رسم الخط المستقيم الاحترافي
+                        // 1. حدود سفلية ملونة داكنة لإبراز الخط بشكل دائر ومجوف كالمسار
+                        PolylineAnnotation(points = linePoints) {
+                            lineColor = Color.Black.copy(alpha = 0.65f)
+                            lineWidth = 9.0
+                            lineJoin = LineJoin.ROUND
+                        }
+
+                        // 2. الخط الرئيسي العريض والأنيق والمستدير
                         PolylineAnnotation(points = linePoints) {
                             lineColor = targetColor
-                            lineWidth = 3.5
-                            lineOpacity = 0.9
+                            lineWidth = 5.5
+                            lineOpacity = 0.95
+                            lineJoin = LineJoin.ROUND
                         }
                         
-                        // 2. حساب وعرض البيانات على الخط بدقة متناهية
+                        // 3. حساب وعرض البيانات على الخط بدقة متناهية
                         val result = viewModel.getTargetResult(target)
                         if (result != null) {
-                            // وضع الملصق في منتصف الخط تماماً
                             val midLng = (start.longitude() + end.longitude()) / 2.0
                             val midLat = (start.latitude() + end.latitude()) / 2.0
                             val midPoint = Point.fromLngLat(midLng, midLat)
                             
-                            val labelText = String.format(Locale.US, "%.0f مل  -  %.1f م", result.azimuthMils6000, result.distance)
+                            val labelText = String.format(Locale.US, "%.0f مليم  -  %.1f م", result.azimuthMils6000, result.distance)
                             val labelBitmap = rememberTextBitmap(labelText, targetColor.copy(alpha = 0.9f))
                             
                             PointAnnotation(point = midPoint) {
@@ -282,16 +290,25 @@ fun MapViewContainer(
                         iconSize = 1.0
                     }
 
-                    // إضافة خط واصل لنقطة العلام أيضاً كما طلب المستخدم
+                    // إضافة خط واصل لنقطة العلام مستدير وعريض كالمسار
                     viewModel.cannonPos?.let { cannon ->
                         val start = Point.fromLngLat(cannon.geoPoint.longitude, cannon.geoPoint.latitude)
                         val end = Point.fromLngLat(ref.geoPoint.longitude, ref.geoPoint.latitude)
                         val linePoints = listOf(start, end)
 
+                        // حدود سفلية داكنة
+                        PolylineAnnotation(points = linePoints) {
+                            lineColor = Color.Black.copy(alpha = 0.55f)
+                            lineWidth = 8.0
+                            lineJoin = LineJoin.ROUND
+                        }
+
+                        // الخط الأساسي
                         PolylineAnnotation(points = linePoints) {
                             lineColor = refColor
-                            lineWidth = 2.5
-                            lineOpacity = 0.7
+                            lineWidth = 4.5
+                            lineOpacity = 0.9
+                            lineJoin = LineJoin.ROUND
                         }
 
                         val result = viewModel.getRefResult(ref)
@@ -299,7 +316,7 @@ fun MapViewContainer(
                             val midLng = (start.longitude() + end.longitude()) / 2.0
                             val midLat = (start.latitude() + end.latitude()) / 2.0
                             
-                            val labelText = String.format(Locale.US, "%.0f مل  -  %.1f م", result.azimuthMils6000, result.distance)
+                            val labelText = String.format(Locale.US, "%.0f مليم  -  %.1f م", result.azimuthMils6000, result.distance)
                             val labelBitmap = rememberTextBitmap(labelText, refColor.copy(alpha = 0.8f))
                             
                             PointAnnotation(point = Point.fromLngLat(midLng, midLat)) {
@@ -318,15 +335,16 @@ fun MapViewContainer(
                 val points = route.geometry.coordinates()
                 
                 if (!isSelected) {
-                    // مسارات بديلة (أزرق غامق شفاف)
+                    // مسارات بديلة (أزرق غامق شفاف وعريض ومستدير)
                     PolylineAnnotation(points = points) {
-                        lineColor = Color(0xFF1A5A99).copy(alpha = 0.4f)
-                        lineWidth = 8.0
+                        lineColor = Color(0xFF1A5A99).copy(alpha = 0.5f)
+                        lineWidth = 10.0
+                        lineJoin = LineJoin.ROUND
                     }
                     
                     // ملصق الوقت للمسارات البديلة (Tooltip)
                     if (points.size > 10) {
-                        val labelIndex = (points.size * 0.6).toInt() // وضع الملصق في الـ 60% من المسار
+                        val labelIndex = (points.size * 0.6).toInt()
                         PointAnnotation(point = points[labelIndex]) {
                             iconImage = IconImage(routeLabels[index])
                             iconAnchor = IconAnchor.CENTER
@@ -336,22 +354,24 @@ fun MapViewContainer(
                 }
             }
 
-            // رسم المسار المختار (أزرق ملكي غامق) فوق المسارات الأخرى
+            // رسم المسار المختار عريض ودائري ومحدد بشكل جميل كالمسار الاحترافي
             routeGeometry?.let {
                 val points = it.coordinates()
                 
-                // 1. الحدود
+                // 1. الحدود الخارجية للمسار
                 PolylineAnnotation(points = points) {
-                    lineColor = Color(0xFF003366) // كحلي غامق جداً
-                    lineWidth = 14.0
-                    lineOpacity = 0.9
+                    lineColor = Color(0xFF001F3F) // كحلي داكن جداً
+                    lineWidth = 16.0
+                    lineOpacity = 0.95
+                    lineJoin = LineJoin.ROUND
                 }
                 
-                // 2. المسار الأساسي
+                // 2. المسار الأساسي الزاهي والدائري
                 PolylineAnnotation(points = points) {
-                    lineColor = Color(0xFF004AAD) // أزرق ملكي
-                    lineWidth = 8.0
+                    lineColor = Color(0xFF0277BD) // أزرق ملكي متألق
+                    lineWidth = 10.0
                     lineOpacity = 1.0
+                    lineJoin = LineJoin.ROUND
                 }
 
                 // ملصق الوقت للمسار المختار (يظهر بوضوح)
@@ -521,11 +541,10 @@ fun UnifiedEditDialog(
     LaunchedEffect(isLoadingElev) {
         // عندما ينتهي التحميل، حدّث القيمة المعروضة
         if (!isLoadingElev && pointId != null) {
-            val freshElev: Double? = when {
-                point is CannonPosition -> viewModel.cannonPos?.elevation
-                point is TargetPosition -> viewModel.targets.firstOrNull { it.id == pointId }?.elevation
-                point is ReferencePoint -> viewModel.referencePoints.firstOrNull { it.id == pointId }?.elevation
-                else -> null
+            val freshElev: Double? = when (point) {
+                is CannonPosition -> viewModel.cannonPos?.elevation
+                is TargetPosition -> viewModel.targets.firstOrNull { it.id == pointId }?.elevation
+                else -> viewModel.referencePoints.firstOrNull { it.id == pointId }?.elevation
             }
             if (freshElev != null && freshElev != 0.0) {
                 elevation = String.format(Locale.US, "%.1f", freshElev)
@@ -748,15 +767,22 @@ fun rememberMarkerBitmap(
         }
         
         val textBounds = android.graphics.Rect()
-        textPaint.getTextBounds(name, 0, name.length, textBounds)
+        if (name.isNotEmpty()) {
+            textPaint.getTextBounds(name, 0, name.length, textBounds)
+        }
         
         val shapeSize = sizePx * 0.7f
-        val width = maxOf(shapeSize, textBounds.width().toFloat() + padding * 4)
-        val height = shapeSize + textBounds.height() + padding * 4
+        val textExtra = if (name.isNotEmpty()) textBounds.height() + padding * 3f else 0f
         
-        val bitmap = createBitmap(width.toInt(), height.toInt())
+        val width = maxOf(shapeSize + padding * 4f, textBounds.width().toFloat() + padding * 6f)
+        val height = shapeSize + textExtra * 2f
+        
+        val bitmap = createBitmap(width.toInt().coerceAtLeast(1), height.toInt().coerceAtLeast(1))
         val canvas = android.graphics.Canvas(bitmap)
         val composeCanvas = Canvas(bitmap.asImageBitmap())
+        
+        val centerX = width / 2f
+        val shapeCenterY = height / 2f
         
         val paint = android.graphics.Paint().apply {
             isAntiAlias = true
@@ -764,10 +790,7 @@ fun rememberMarkerBitmap(
             style = android.graphics.Paint.Style.FILL
         }
         
-        val centerX = width / 2f
-        val shapeCenterY = if (shape == MarkerShape.TRIANGLE) shapeSize * 0.66f else shapeSize / 2f
-        
-        // Draw Shape with shadow/border
+        // Draw Shape with shadow/border centered exactly at (centerX, shapeCenterY)
         val borderPaint = android.graphics.Paint().apply {
             isAntiAlias = true
             this.color = android.graphics.Color.WHITE
@@ -777,26 +800,31 @@ fun rememberMarkerBitmap(
 
         when (shape) {
             MarkerShape.SQUARE -> {
-                val rect = android.graphics.RectF(centerX - shapeSize/2, 0f, centerX + shapeSize/2, shapeSize)
+                val rect = android.graphics.RectF(
+                    centerX - shapeSize / 2f,
+                    shapeCenterY - shapeSize / 2f,
+                    centerX + shapeSize / 2f,
+                    shapeCenterY + shapeSize / 2f
+                )
                 canvas.drawRoundRect(rect, 12f, 12f, paint)
                 canvas.drawRoundRect(rect, 12f, 12f, borderPaint)
             }
             MarkerShape.CIRCLE -> {
-                canvas.drawCircle(centerX, shapeCenterY, shapeSize / 2, paint)
-                canvas.drawCircle(centerX, shapeCenterY, shapeSize / 2, borderPaint)
+                canvas.drawCircle(centerX, shapeCenterY, shapeSize / 2f, paint)
+                canvas.drawCircle(centerX, shapeCenterY, shapeSize / 2f, borderPaint)
             }
             MarkerShape.TRIANGLE -> {
                 val path = android.graphics.Path()
-                path.moveTo(centerX, 0f)
-                path.lineTo(centerX - shapeSize/2, shapeSize)
-                path.lineTo(centerX + shapeSize/2, shapeSize)
+                path.moveTo(centerX, shapeCenterY - shapeSize / 2f)
+                path.lineTo(centerX - shapeSize / 2f, shapeCenterY + shapeSize / 2f)
+                path.lineTo(centerX + shapeSize / 2f, shapeCenterY + shapeSize / 2f)
                 path.close()
                 canvas.drawPath(path, paint)
                 canvas.drawPath(path, borderPaint)
             }
         }
         
-        // Draw Center Dot
+        // Draw Center Dot at exact center
         val dotPaint = android.graphics.Paint().apply {
             isAntiAlias = true
             this.color = android.graphics.Color.WHITE
@@ -804,7 +832,7 @@ fun rememberMarkerBitmap(
         }
         canvas.drawCircle(centerX, shapeCenterY, shapeSize * 0.12f, dotPaint)
         
-        // Draw Icon if exists
+        // Draw Icon if exists at exact center
         painter?.let { p ->
             val iconSize = shapeSize * 0.55f
             val drawScope = CanvasDrawScope()
@@ -814,7 +842,7 @@ fun rememberMarkerBitmap(
                 canvas = composeCanvas,
                 size = Size(width, height)
             ) {
-                translate(left = centerX - iconSize / 2, top = shapeCenterY - iconSize / 2) {
+                translate(left = centerX - iconSize / 2f, top = shapeCenterY - iconSize / 2f) {
                     with(p) {
                         draw(size = Size(iconSize, iconSize), colorFilter = ColorFilter.tint(Color.White.copy(alpha = 0.9f)))
                     }
@@ -822,8 +850,10 @@ fun rememberMarkerBitmap(
             }
         }
         
-        // Draw Label
-        canvas.drawText(name, centerX, shapeSize + textBounds.height() + padding * 2, textPaint)
+        // Draw Label symmetric below the shape
+        if (name.isNotEmpty()) {
+            canvas.drawText(name, centerX, shapeCenterY + shapeSize / 2f + textBounds.height() + padding, textPaint)
+        }
         
         bitmap
     }

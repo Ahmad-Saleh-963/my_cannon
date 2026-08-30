@@ -93,9 +93,11 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOfflineViewModel = viewModel()) {
     val context = LocalContext.current
-    
+
     var destinationPoint by remember { mutableStateOf<Point?>(null) }
     var isSearchBarVisible by remember { mutableStateOf(value = false) }
+
+    // ─── حالة الاستيراد/التصدير ───────────────────────────────────────────────
 
     val searchQuery by offlineViewModel.searchQuery.collectAsState()
     val searchResults by offlineViewModel.proResults.collectAsState()
@@ -894,11 +896,11 @@ fun ExpandablePointDashboard(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Column {
                         Text("المسافة (Range)", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                        Text("${String.format(Locale.US, "%.1f", it.distance)} m", fontWeight = FontWeight.Bold)
+                        Text("${String.format(Locale.US, "%.1f", it.distance)} متر ", fontWeight = FontWeight.Bold)
                     }
                     Column {
                         Text("السمت (Azimuth)", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                        Text("${String.format(Locale.US, "%.2f", it.normalizedAzimuth)}°", fontWeight = FontWeight.Bold)
+                        Text("${String.format(Locale.US, "%.2f", it.azimuthMils6000)} مليم ", fontWeight = FontWeight.Bold)
                     }
                     Column {
                         Text("الربع", style = MaterialTheme.typography.labelSmall, color = Color.Gray)

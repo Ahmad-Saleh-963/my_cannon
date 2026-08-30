@@ -28,7 +28,9 @@ import com.example.my_cannon.data.model.PointType
 fun SettingsScreens(
     onBack: () -> Unit,
     onNavigateToOffline: () -> Unit,
-    onNavigateToLists: () -> Unit
+    onNavigateToLists: () -> Unit,
+    onExport: () -> Unit = {},
+    onImport: () -> Unit = {}
 ) {
     Scaffold(
         topBar = {
@@ -70,6 +72,35 @@ fun SettingsScreens(
                 icon = Icons.Default.Map,
                 color = Color(0xFF388E3C),
                 onClick = onNavigateToOffline
+            )
+
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 4.dp),
+                color = MaterialTheme.colorScheme.outlineVariant
+            )
+
+            Text(
+                "إدارة الجلسات",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+
+            SettingsCard(
+                title = "تصدير الجلسة الحالية",
+                subtitle = "حفظ المربط والأهداف ونقاط العلام في ملف قابل للمشاركة",
+                icon = Icons.Default.FileUpload,
+                color = Color(0xFF7B1FA2),
+                onClick = onExport
+            )
+
+            SettingsCard(
+                title = "استيراد جلسة",
+                subtitle = "استيراد ملف جلسة من شخص آخر أو نسخة احتياطية",
+                icon = Icons.Default.FileDownload,
+                color = Color(0xFFE65100),
+                onClick = onImport
             )
         }
     }

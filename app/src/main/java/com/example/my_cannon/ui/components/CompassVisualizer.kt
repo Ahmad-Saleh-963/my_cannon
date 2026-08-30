@@ -60,14 +60,23 @@ fun CompassVisualizer(
                     val targetX = center.x + radius * cos(angleRad).toFloat()
                     val targetY = center.y + radius * sin(angleRad).toFloat()
 
+                    // رسم خط السمت عريض ودائري الأطراف ومحدد بظل داكن كالمسار
+                    drawLine(
+                        color = Color.Black.copy(alpha = 0.5f),
+                        start = center,
+                        end = Offset(targetX, targetY),
+                        strokeWidth = 16f,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
                     drawLine(
                         color = Color.Red,
                         start = center,
                         end = Offset(targetX, targetY),
-                        strokeWidth = 8f
+                        strokeWidth = 10f,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
                     )
                     
-                    drawCircle(Color.Red, 10f, Offset(targetX, targetY))
+                    drawCircle(Color.Red, 12f, Offset(targetX, targetY))
                 }
 
                 // كتابة أسماء الأرباع
