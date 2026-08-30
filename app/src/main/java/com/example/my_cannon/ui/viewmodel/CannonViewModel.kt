@@ -79,7 +79,7 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * يستمع لتغييرات قاعدة البيانات ويُحدِّث الـ UI تلقائياً.
-     * يقوم بمزامنة أولية واحدة من SharedPrefs إلى Room إذا وُجد مربط قديم.
+     * يقوم بمزامنة أولية واحدة من SharedPrefs إلى Room إذا وُجد مربض قديم.
      */
     private fun collectFromDatabase() {
         viewModelScope.launch {

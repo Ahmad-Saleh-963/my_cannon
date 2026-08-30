@@ -54,7 +54,7 @@ object MissionImporter {
             val refs    = snapshot.referencePoints.map { it.toReferencePoint() }
 
             val stats = buildString {
-                if (cannon != null) append("✅ مربط\n")
+                if (cannon != null) append("✅ مربض\n")
                 if (targets.isNotEmpty()) append("✅ ${targets.size} هدف\n")
                 if (refs.isNotEmpty()) append("✅ ${refs.size} نقطة علام")
             }.trim()
