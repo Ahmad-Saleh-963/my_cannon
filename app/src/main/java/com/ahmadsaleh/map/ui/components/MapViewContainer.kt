@@ -4,6 +4,12 @@ package com.ahmadsaleh.map.ui.components
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.location.Location
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GpsFixed
@@ -58,15 +64,39 @@ import com.mapbox.maps.plugin.viewport.data.FollowPuckViewportStateBearing
 import com.mapbox.maps.EdgeInsets
 import com.mapbox.maps.plugin.locationcomponent.location
 import androidx.compose.ui.graphics.drawscope.translate
+import android.os.Looper
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import com.ahmadsaleh.map.data.model.*
 import com.ahmadsaleh.map.domain.calculator.UtmConverter
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import com.mapbox.maps.plugin.gestures.OnMoveListener
 import com.mapbox.maps.extension.localization.localizeLabels
+import java.util.Calendar
+import java.text.SimpleDateFormat
 import java.util.Locale
+import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.seconds
 import androidx.core.graphics.createBitmap
+import com.mapbox.android.gestures.MoveGestureDetector
+import com.mapbox.android.gestures.StandardScaleGestureDetector
+import com.mapbox.maps.extension.style.expressions.generated.Expression
+import com.mapbox.maps.plugin.gestures.OnScaleListener
 
 @SuppressLint("ConfigurationScreenWidthHeight")
 @OptIn(MapboxExperimental::class)
@@ -77,10 +107,11 @@ fun MapViewContainer(
     locationPermissionGranted: Boolean,
     allRoutes: List<RouteInfo> = emptyList(),
     selectedRouteIndex: Int = 0,
+    onSelectRoute: (Int) -> Unit = {},
     destinationPoint: Point? = null,
     @SuppressLint("ModifierParameter") modifier: Modifier = Modifier
 ) {
-    val routeGeometry = if (allRoutes.isNotEmpty()) allRoutes[selectedRouteIndex].geometry else null
+    val routeGeometry = if (allRoutes.isNotEmpty()) allRoutes[selectedRouteIndex.coerceIn(0, allRoutes.lastIndex)].geometry else null
     
     // تعريف الأشكال والرموز للعلامات الجديدة
     // سيتم توليد أهداف وعلامات بشكل ديناميكي داخل الحلقة لضمان تحديث الأسماء
@@ -91,28 +122,80 @@ fun MapViewContainer(
     val carBodyBitmap = rememberIconBitmap(Icons.Default.Navigation, Color(0xFF007AFF))
     val carShadowBitmap = rememberIconBitmap(Icons.Default.Navigation, Color.Black.copy(alpha = 0.2f))
 
-    // توليد ملصقات الوقت لكافة المسارات مسبقاً بتنسيق عربي فصيح لمدد المسار
-    val routeLabels = allRoutes.map { route ->
+    // توليد ملصقات متميزة ومخصصة لكل مسار (الرئيسي والبديل) بتنسيق عربي فصيح متناسق
+    val routeLabels = allRoutes.mapIndexed { index, route ->
         val timeStr = formatDurationArabic(route.durationMinutes)
         val distStr = String.format(Locale.US, "%.1f كم", route.distanceKm)
-        val labelText = "$timeStr  •  $distStr"
-        rememberTextBitmap(labelText, Color(0xFF004AAD))
+        val isSelected = index == selectedRouteIndex
+        val summaryStr = if (route.summary.isNotBlank() && !route.summary.startsWith("مسار")) route.summary else null
+        
+        val labelText = when {
+            isSelected && summaryStr != null -> "الرئيسي ($summaryStr)  •  $timeStr  •  $distStr"
+            isSelected -> "الرئيسي  •  $timeStr  •  $distStr"
+            summaryStr != null -> "بديل ($summaryStr)  •  $timeStr  •  $distStr"
+            else -> "بديل ${index + 1}  •  $timeStr  •  $distStr"
+        }
+        
+        val bgColor = if (isSelected) Color(0xFF004AAD) else Color(0xFF1E293B)
+        rememberTextBitmap(labelText, bgColor)
     }
 
     val configuration = LocalConfiguration.current
     val screenHeightPx = with(LocalDensity.current) { configuration.screenHeightDp.dp.toPx() }
 
+    val context = LocalContext.current
+
+    // استماع للتحديثات فائقة السرعة للموقع والسرعة اللحظية المباشرة (150ms-300ms)
+    DisposableEffect(locationPermissionGranted) {
+        if (!locationPermissionGranted) return@DisposableEffect onDispose {}
+
+        val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
+        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 300L)
+            .setMinUpdateIntervalMillis(150L)
+            .setMinUpdateDistanceMeters(0.0f)
+            .setWaitForAccurateLocation(false)
+            .build()
+
+        val locationCallback = object : LocationCallback() {
+            override fun onLocationResult(result: LocationResult) {
+                result.lastLocation?.let { location ->
+                    viewModel.processLocationUpdate(location)
+                }
+            }
+        }
+
+        try {
+            fusedLocationClient.requestLocationUpdates(
+                locationRequest,
+                locationCallback,
+                Looper.getMainLooper()
+            )
+        } catch (_: SecurityException) {
+            // تجاهل الاستثناء في حال تغير صلاحيات النظام
+        }
+
+        onDispose {
+            fusedLocationClient.removeLocationUpdates(locationCallback)
+        }
+    }
+
+    var userDrivingZoom by remember { mutableDoubleStateOf(13.8) }
     var isNavLocked by remember { mutableStateOf(value = false) }
     var lastInteractionTime by remember { mutableLongStateOf(0L) }
 
     val lockNavigation: () -> Unit = {
-        if (locationPermissionGranted && allRoutes.isNotEmpty()) {
+        if (locationPermissionGranted) {
+            // قراءة الزوم المباشر من الكاميرا إذا كان المستخدم قد عدله، للحفاظ عليه كما هو
+            mapViewportState.cameraState?.zoom?.let { currentZoom ->
+                if (currentZoom > 0) userDrivingZoom = currentZoom
+            }
+
             mapViewportState.transitionToFollowPuckState(
                 followPuckViewportStateOptions = FollowPuckViewportStateOptions.Builder()
                     .bearing(FollowPuckViewportStateBearing.SyncWithLocationPuck)
-                    // الرؤية من الأعلى مباشرة (Flat) مع بقاء السيارة في الأسفل (10%)
-                    .padding(EdgeInsets(screenHeightPx.toDouble() * 0.8, 0.0, 0.0, 0.0))
-                    .zoom(15.5) // تقليل الزوم لعرض مساحة أكبر من الطريق
+                    // وضع السيارة في الأسفل 30% وإتاحة 70% لرؤية مسافة أكبر من الطريق
+                    .padding(EdgeInsets(screenHeightPx.toDouble() * 0.70, 0.0, 0.0, 0.0))
+                    .zoom(userDrivingZoom) // الحفاظ الكامل والمطلق على الزوم الذي حدده المستخدم بنفسه
                     .pitch(0.0) 
                     .build()
             )
@@ -122,6 +205,9 @@ fun MapViewContainer(
     LaunchedEffect(lastInteractionTime, isNavLocked) {
         if (isNavLocked && (lastInteractionTime > 0)) {
             delay(4.seconds)
+            mapViewportState.cameraState?.zoom?.let { currentZoom ->
+                if (currentZoom > 0) userDrivingZoom = currentZoom
+            }
             lockNavigation()
             lastInteractionTime = 0L
         }
@@ -129,9 +215,9 @@ fun MapViewContainer(
 
     LaunchedEffect(locationPermissionGranted, allRoutes, isNavLocked) {
         if (locationPermissionGranted) {
-            if (allRoutes.isNotEmpty() && isNavLocked) {
+            if (isNavLocked) {
                 lockNavigation()
-            } else if (!isNavLocked) {
+            } else {
                 mapViewportState.transitionToFollowPuckState()
             }
         }
@@ -160,11 +246,44 @@ fun MapViewContainer(
                 }
 
                 mapView.gestures.addOnMoveListener(object : OnMoveListener {
-                    override fun onMoveBegin(detector: com.mapbox.android.gestures.MoveGestureDetector) {
-                        if (isNavLocked) lastInteractionTime = System.currentTimeMillis()
+                    override fun onMoveBegin(detector: MoveGestureDetector) {
+                        if (isNavLocked) {
+                            lastInteractionTime = System.currentTimeMillis()
+                            mapViewportState.cameraState?.zoom?.let { z -> if (z > 0) userDrivingZoom = z }
+                        }
                     }
-                    override fun onMove(detector: com.mapbox.android.gestures.MoveGestureDetector) = false
-                    override fun onMoveEnd(detector: com.mapbox.android.gestures.MoveGestureDetector) {}
+                    override fun onMove(detector: MoveGestureDetector): Boolean {
+                        if (isNavLocked) {
+                            lastInteractionTime = System.currentTimeMillis()
+                        }
+                        return false
+                    }
+                    override fun onMoveEnd(detector: MoveGestureDetector) {
+                        if (isNavLocked) {
+                            lastInteractionTime = System.currentTimeMillis()
+                            mapViewportState.cameraState?.zoom?.let { z -> if (z > 0) userDrivingZoom = z }
+                        }
+                    }
+                })
+
+                mapView.gestures.addOnScaleListener(object : OnScaleListener {
+                    override fun onScaleBegin(detector: StandardScaleGestureDetector) {
+                        if (isNavLocked) {
+                            lastInteractionTime = System.currentTimeMillis()
+                        }
+                    }
+                    override fun onScale(detector: StandardScaleGestureDetector) {
+                        if (isNavLocked) {
+                            lastInteractionTime = System.currentTimeMillis()
+                            mapViewportState.cameraState?.zoom?.let { z -> if (z > 0) userDrivingZoom = z }
+                        }
+                    }
+                    override fun onScaleEnd(detector: StandardScaleGestureDetector) {
+                        if (isNavLocked) {
+                            lastInteractionTime = System.currentTimeMillis()
+                            mapViewportState.cameraState?.zoom?.let { z -> if (z > 0) userDrivingZoom = z }
+                        }
+                    }
                 })
 
                 mapView.location.updateSettings {
@@ -177,7 +296,7 @@ fun MapViewContainer(
                             topImage = ImageHolder.from(carTopBitmap),
                             shadowImage = ImageHolder.from(carShadowBitmap),
                             // تصغير الحجم ليكون أنيقاً وغير مغطٍ للطريق (1.3 بدلاً من 2.5)
-                            scaleExpression = com.mapbox.maps.extension.style.expressions.generated.Expression.literal(1.3).toString()
+                            scaleExpression = Expression.literal(1.3).toString()
                         )
                     } else {
                         createDefault2DPuck(withBearing = true)
@@ -331,58 +450,88 @@ fun MapViewContainer(
                 }
             }
 
-            // رسم كافة المسارات (Google Maps Style)
+            // 1. أولاً: رسم كافة الطرق الفرعية والبديلة بعرض أقل (6.0) ولون رمادي فولاذي متميز شبه معتم (0.88)
             allRoutes.forEachIndexed { index, route ->
                 val isSelected = index == selectedRouteIndex
                 val points = route.geometry.coordinates()
                 
                 if (!isSelected) {
-                    // مسارات بديلة (أزرق غامق شفاف وعريض ومستدير)
+                    // أ) حد داكن سفلي لتمييز الطريق الفرعي بعرض أقل (11.0)
                     PolylineAnnotation(points = points) {
-                        lineColor = Color(0xFF1A5A99).copy(alpha = 0.5f)
-                        lineWidth = 10.0
+                        interactionsState.onClicked {
+                            onSelectRoute(index)
+                            true
+                        }
+                        lineColor = Color(0xFF0F172A) // فحمي/كحلي داكن
+                        lineWidth = 11.0
+                        lineOpacity = 0.90
                         lineJoin = LineJoin.ROUND
                     }
-                    
-                    // ملصق الوقت للمسارات البديلة (Tooltip)
-                    if (points.size > 10) {
-                        val labelIndex = (points.size * 0.6).toInt()
-                        PointAnnotation(point = points[labelIndex]) {
-                            iconImage = IconImage(routeLabels[index])
-                            iconAnchor = IconAnchor.CENTER
-                            iconSize = 0.8
+
+                    // ب) جسم الطريق الفرعي بلون رمادي/فولاذي ملاحي متميز وشبه معتم بعرض أقل (6.0)
+                    PolylineAnnotation(points = points) {
+                        interactionsState.onClicked {
+                            onSelectRoute(index)
+                            true
                         }
+                        lineColor = Color(0xFF64748B) // رمادي فولاذي ملاحي أنيق ومختلف كلياً عن الأزرق
+                        lineWidth = 6.0
+                        lineOpacity = 0.88 // أقل شفافية بقليل ليكون واضحاً ومشاهد مع التضاريس
+                        lineJoin = LineJoin.ROUND
                     }
                 }
             }
 
-            // رسم المسار المختار عريض ودائري ومحدد بشكل جميل كالمسار الاحترافي
+            // 2. ثانياً: رسم المسار الأساسي الرئيسي المختار بتباين عالي جداً وعريض (10.0 / 16.0) فوق الطرق الأخرى
             routeGeometry?.let {
                 val points = it.coordinates()
                 
-                // 1. الحدود الخارجية للمسار
+                // أ) الحد السفلي الداكن الحاد للمسار الرئيسي
                 PolylineAnnotation(points = points) {
-                    lineColor = Color(0xFF001F3F) // كحلي داكن جداً
+                    lineColor = Color(0xFF001428) // كحلي داكن جداً
                     lineWidth = 16.0
-                    lineOpacity = 0.95
+                    lineOpacity = 1.0
                     lineJoin = LineJoin.ROUND
                 }
                 
-                // 2. المسار الأساسي الزاهي والدائري
+                // ب) جسم المسار الرئيسي الزاهي والتفاعلي (أزرق ملكي متألق)
                 PolylineAnnotation(points = points) {
-                    lineColor = Color(0xFF0277BD) // أزرق ملكي متألق
+                    lineColor = Color(0xFF0284C7) // أزرق ملكي زاهٍ ومتألق
                     lineWidth = 10.0
                     lineOpacity = 1.0
                     lineJoin = LineJoin.ROUND
                 }
+            }
 
-                // ملصق الوقت للمسار المختار (يظهر بوضوح)
-                if (points.size > 10) {
-                    val labelIndex = (points.size * 0.4).toInt() // وضعه في الـ 40% من المسار لتمييزه
+            // 3. ثالثاً: وضع ملصقات الطرق الفرعية والبديلة مقربة من موقع السائق والمفارق
+            allRoutes.forEachIndexed { index, route ->
+                val isSelected = index == selectedRouteIndex
+                val points = route.geometry.coordinates()
+                
+                if (!isSelected && points.size > 5) {
+                    val labelIndex = (points.size * 0.25).toInt().coerceAtLeast(1)
                     PointAnnotation(point = points[labelIndex]) {
-                        iconImage = IconImage(routeLabels[selectedRouteIndex])
+                        interactionsState.onClicked {
+                            onSelectRoute(index)
+                            true
+                        }
+                        iconImage = IconImage(routeLabels[index])
                         iconAnchor = IconAnchor.CENTER
-                        iconSize = 1.1
+                        iconSize = 0.95
+                    }
+                }
+            }
+
+            // 4. رابعاً: وضع ملصق المسار الرئيسي المختار في أقرب موضع لموقع السائق المباشر (12% من بداية المسار)
+            routeGeometry?.let {
+                val points = it.coordinates()
+                if (points.size > 5) {
+                    val labelIndex = (points.size * 0.12).toInt().coerceAtLeast(1)
+                    val validIndex = selectedRouteIndex.coerceIn(0, routeLabels.lastIndex)
+                    PointAnnotation(point = points[labelIndex]) {
+                        iconImage = IconImage(routeLabels[validIndex])
+                        iconAnchor = IconAnchor.CENTER
+                        iconSize = 1.05
                     }
                 }
             }
@@ -404,34 +553,58 @@ fun MapViewContainer(
             )
         }
 
-        // زر تتبع القيادة وقفل الملاحة الموحد مقابل البوصلة مباشرةً
+        // زر تتبع القيادة وقفل الملاحة الموحد + لوحة عرض السرعة اللحظية المباشرة أسفله مباشرةً
         Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-            Surface(
-                onClick = {
-                    if (locationPermissionGranted) {
-                        isNavLocked = !isNavLocked
-                    }
-                },
+            Column(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = 48.dp, end = 16.dp)
-                    .size(42.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = if (isNavLocked) Color(0xFF0A84FF) else Color.Black.copy(alpha = 0.75f),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.2.dp,
-                    if (isNavLocked) Color(0xFF30D158) else Color.White.copy(alpha = 0.35f)
-                ),
-                tonalElevation = 6.dp,
-                shadowElevation = 4.dp
+                    .padding(top = 48.dp, end = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.Navigation,
-                        contentDescription = "تتبع القيادة",
-                        tint = if (isNavLocked) Color.White else Color.White.copy(alpha = 0.85f),
-                        modifier = Modifier.size(20.dp)
-                    )
+                // 1. زر تتبع القيادة وقفل الملاحة
+                Surface(
+                    onClick = {
+                        if (locationPermissionGranted) {
+                            isNavLocked = !isNavLocked
+                        }
+                    },
+                    modifier = Modifier.size(44.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (isNavLocked) Color(0xFF0A84FF) else Color(0xFF0D131D).copy(alpha = 0.85f),
+                    border = BorderStroke(
+                        1.5.dp,
+                        if (isNavLocked) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.35f)
+                    ),
+                    tonalElevation = 8.dp,
+                    shadowElevation = 6.dp
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Navigation,
+                            contentDescription = "تتبع القيادة",
+                            tint = if (isNavLocked) Color.White else Color.White.copy(alpha = 0.85f),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+
+                // 2. عداد السرعة والوقت والمسافة للوصول (يظهر حصراً وفقط عند تفعيل وضع القيادة isNavLocked = true)
+                AnimatedVisibility(
+                    visible = isNavLocked,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        RealtimeSpeedometerWidget(
+                            viewModel = viewModel,
+                            isNavLocked = isNavLocked,
+                            locationPermissionGranted = locationPermissionGranted,
+                            allRoutes = allRoutes,
+                            selectedRouteIndex = selectedRouteIndex,
+                            destinationPoint = destinationPoint
+                        )
+                    }
                 }
             }
         }
@@ -448,39 +621,321 @@ fun CardinalDirectionsOverlay() {
     }
 }
 
+data class EtaInfo(
+    val remainingMinutes: Int,
+    val remainingDistanceKm: Double,
+    val arrivalTimeFormatted: String,
+    val formattedDurationText: String
+)
+
+fun calculateLiveEta(
+    currentSpeedKmh: Float,
+    averageMovingSpeedKmh: Float,
+    allRoutes: List<RouteInfo>,
+    selectedRouteIndex: Int,
+    destinationPoint: Point?,
+    currentLat: Double?,
+    currentLon: Double?
+): EtaInfo? {
+    var baseDistanceKm: Double
+    var baseDurationMinutes: Int
+
+    val hasRoute = allRoutes.isNotEmpty() && selectedRouteIndex in allRoutes.indices
+    
+    if (hasRoute) {
+        val route = allRoutes[selectedRouteIndex.coerceIn(0, allRoutes.lastIndex)]
+        baseDistanceKm = route.distanceKm
+        baseDurationMinutes = route.durationMinutes
+    } else if (destinationPoint != null && currentLat != null && currentLon != null) {
+        val results = FloatArray(1)
+        Location.distanceBetween(
+            currentLat, currentLon,
+            destinationPoint.latitude(), destinationPoint.longitude(),
+            results
+        )
+        baseDistanceKm = results[0] / 1000.0
+        baseDurationMinutes = ((baseDistanceKm / 40.0) * 60.0).toInt().coerceAtLeast(1)
+    } else {
+        return null
+    }
+
+    if (baseDistanceKm <= 0.05) {
+        return EtaInfo(
+            remainingMinutes = 0,
+            remainingDistanceKm = 0.0,
+            arrivalTimeFormatted = "وصلت للهدف",
+            formattedDurationText = "تم الوصول"
+        )
+    }
+
+    // خوارزمية ذكية لحساب السرعة الفعالة لمعدل القيادة والحركة المباشرة
+    val routeBaseSpeedKmh = if (hasRoute && baseDurationMinutes > 0) {
+        (baseDistanceKm / (baseDurationMinutes / 60.0)).coerceIn(15.0, 110.0)
+    } else {
+        40.0
+    }
+
+    val effectiveSpeedKmh = when {
+        currentSpeedKmh >= 10f -> {
+            // مزيج ذكي بين السرعة اللحظية ومعدل الحركة وسرعة المسار
+            (0.40 * currentSpeedKmh) + (0.45 * averageMovingSpeedKmh.coerceAtLeast(10f)) + (0.15 * routeBaseSpeedKmh)
+        }
+        averageMovingSpeedKmh >= 15f -> {
+            // عند التوقف المؤقت في الإشارة، الاعتماد على معدل حركة السائق بدلاً من التصفير
+            (0.70 * averageMovingSpeedKmh) + (0.30 * routeBaseSpeedKmh)
+        }
+        else -> routeBaseSpeedKmh
+    }
+
+    val finalDurationMinutes = ((baseDistanceKm / effectiveSpeedKmh) * 60.0).roundToInt().coerceAtLeast(1)
+
+    val calendar = Calendar.getInstance().apply {
+        add(Calendar.MINUTE, finalDurationMinutes)
+    }
+    val timeFormat = SimpleDateFormat("hh:mm a", Locale("ar"))
+    val arrivalTimeFormatted = timeFormat.format(calendar.time)
+
+    val formattedDurationText = formatDurationArabic(finalDurationMinutes)
+
+    return EtaInfo(
+        remainingMinutes = finalDurationMinutes,
+        remainingDistanceKm = baseDistanceKm,
+        arrivalTimeFormatted = arrivalTimeFormatted,
+        formattedDurationText = formattedDurationText
+    )
+}
+
 /**
- * وظيفة لتحويل النص إلى Bitmap لعرضه كملصق (Tooltip) على الخريطة
+ * عداد السرعة اللحظية والمدة المتوقعة للوصول المصمم خصيصاً لأنظمة الملاحة القيادية (Automotive HUD)
+ * يحسب السرعة الحية محسوبة بالمسافة خلال وحدة الزمن بدقة فائقة ويحسب المدة الزمنية المتبقية بدقة متناهية
+ */
+@Composable
+fun RealtimeSpeedometerWidget(
+    viewModel: CannonViewModel,
+    isNavLocked: Boolean,
+    locationPermissionGranted: Boolean,
+    allRoutes: List<RouteInfo> = emptyList(),
+    selectedRouteIndex: Int = 0,
+    destinationPoint: Point? = null
+) {
+    val speedDisplay by animateIntAsState(
+        targetValue = viewModel.currentSpeedDisplay,
+        animationSpec = tween(durationMillis = 200),
+        label = "SpeedAnimation"
+    )
+
+    val isMoving = viewModel.isMoving
+    val currentLoc = viewModel.getLastLocation()
+
+    // حساب المدة المتوقعة الحقيقية ووقت الوصول بدقة متناهية عبر المعدل الذكي
+    val etaInfo = remember(
+        viewModel.currentSpeedKmh,
+        viewModel.averageMovingSpeedKmh,
+        allRoutes,
+        selectedRouteIndex,
+        destinationPoint,
+        currentLoc
+    ) {
+        calculateLiveEta(
+            currentSpeedKmh = viewModel.currentSpeedKmh,
+            averageMovingSpeedKmh = viewModel.averageMovingSpeedKmh,
+            allRoutes = allRoutes,
+            selectedRouteIndex = selectedRouteIndex,
+            destinationPoint = destinationPoint,
+            currentLat = currentLoc?.first,
+            currentLon = currentLoc?.second
+        )
+    }
+
+    // الألوان التفاعلية حسب السرعة ووضع القيادة
+    // الألوان التفاعلية حسب السرعة ووضع القيادة
+    val speedColor = when {
+        !locationPermissionGranted -> Color.Gray
+        speedDisplay == 0 -> Color.White.copy(alpha = 0.88f)
+        speedDisplay < 80 -> Color(0xFF00E5FF) // أزرق سياني متألق
+        speedDisplay < 120 -> Color(0xFFFFD600) // أصفر/ذهبي
+        else -> Color(0xFFFF3B30) // أحمر تنبيه
+    }
+
+    val borderColor = when {
+        isNavLocked -> Color(0xFF00E5FF)
+        isMoving -> Color(0xFF30D158)
+        else -> Color.White.copy(alpha = 0.25f)
+    }
+
+    var showDetails by remember { mutableStateOf(false) }
+
+    Surface(
+        onClick = { showDetails = !showDetails },
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFF090D16).copy(alpha = 0.88f),
+        border = BorderStroke(
+            width = if (isNavLocked || isMoving) 1.5.dp else 1.0.dp,
+            color = borderColor
+        ),
+        shadowElevation = 6.dp,
+        modifier = Modifier.width(78.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // مؤشر النبض المباشر للـ GPS
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.padding(bottom = 1.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(5.dp)
+                        .background(
+                            color = if (locationPermissionGranted) {
+                                if (isMoving) Color(0xFF30D158) else Color(0xFF00E5FF)
+                            } else Color.Red,
+                            shape = CircleShape
+                        )
+                )
+                Spacer(modifier = Modifier.width(3.dp))
+                Text(
+                    text = if (isNavLocked) "حي" else "GPS",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 7.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White.copy(alpha = 0.6f)
+                    )
+                )
+            }
+
+            // عرض السرعة الحقيقية اللحظية متناسقة ومصممة باحترافية
+            Text(
+                text = "$speedDisplay",
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontSize = 21.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = speedColor
+                )
+            )
+
+            // وحدة قياس السرعة (كم/س)
+            Text(
+                text = "كم/س",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White.copy(alpha = 0.8f)
+                )
+            )
+
+            // عرض المدة المتوقعة للوصول بدقة عالية متناسقة
+            etaInfo?.let { eta ->
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    color = Color.White.copy(alpha = 0.18f)
+                )
+
+                // 1. المدة الزمنية المتبقية
+                Text(
+                    text = eta.formattedDurationText,
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF00E5FF)
+                )
+
+                // 2. وقت الوصول على الساعة
+                Text(
+                    text = eta.arrivalTimeFormatted,
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFFFD600)
+                )
+
+                // 3. المسافة المتبقية
+                Text(
+                    text = String.format(Locale.US, "%.1f كم", eta.remainingDistanceKm),
+                    fontSize = 8.sp,
+                    color = Color.White.copy(alpha = 0.65f)
+                )
+            }
+
+            // تفاصيل إضافية تظهر عند النقر على العداد
+            AnimatedVisibility(
+                visible = showDetails,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(top = 3.dp)
+                ) {
+                    if (etaInfo == null) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 3.dp),
+                            color = Color.White.copy(alpha = 0.15f)
+                        )
+                    }
+                    Text(
+                        text = "أقصى سرعة",
+                        fontSize = 7.5.sp,
+                        color = Color.White.copy(alpha = 0.5f)
+                    )
+                    Text(
+                        text = "${viewModel.topSpeedKmh.roundToInt()} كم/س",
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFD600)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * وظيفة لتحويل النص إلى Bitmap لعرضه كملصق أنيق وصغير (Tooltip) على الخريطة
  */
 @Composable
 fun rememberTextBitmap(text: String, bgColor: Color): Bitmap {
     val density = LocalDensity.current
     return remember(text, bgColor) {
-        val paint = android.graphics.Paint().apply {
+        val paint = Paint().apply {
             isAntiAlias = true
-            textSize = with(density) { 14.sp.toPx() }
+            textSize = with(density) { 11.sp.toPx() } // حجم أنيق وصغير جداً ومتناسق
             color = android.graphics.Color.WHITE
-            textAlign = android.graphics.Paint.Align.CENTER
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.DEFAULT_BOLD
         }
         
-        val bounds = android.graphics.Rect()
+        val bounds = Rect()
         paint.getTextBounds(text, 0, text.length, bounds)
         
-        val padding = with(density) { 8.dp.toPx() }
-        val width = bounds.width() + (padding * 2)
-        val height = bounds.height() + (padding * 2)
+        val padX = with(density) { 6.dp.toPx() }
+        val padY = with(density) { 3.dp.toPx() }
+        val width = bounds.width() + (padX * 2f)
+        val height = bounds.height() + (padY * 2.5f)
         
-        val bitmap = createBitmap(width.toInt(), height.toInt())
+        val bitmap = createBitmap(width.toInt().coerceAtLeast(1), height.toInt().coerceAtLeast(1))
         val canvas = android.graphics.Canvas(bitmap)
         
-        val bgPaint = android.graphics.Paint().apply {
+        val bgPaint = Paint().apply {
+            isAntiAlias = true
             color = bgColor.toArgb()
-            style = android.graphics.Paint.Style.FILL
+            style = Paint.Style.FILL
+        }
+
+        val borderPaint = Paint().apply {
+            isAntiAlias = true
+            color = android.graphics.Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = with(density) { 1.2.dp.toPx() }
         }
         
-        val rect = android.graphics.RectF(0f, 0f, width, height)
-        canvas.drawRoundRect(rect, padding, padding, bgPaint)
-        canvas.drawText(text, width / 2, (height / 2) - ((paint.descent() + paint.ascent()) / 2), paint)
+        val rect = RectF(0f, 0f, width, height)
+        val cornerRadius = with(density) { 8.dp.toPx() }
+        canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bgPaint)
+        canvas.drawRoundRect(rect, cornerRadius, cornerRadius, borderPaint)
+        
+        canvas.drawText(text, width / 2f, (height / 2f) - ((paint.descent() + paint.ascent()) / 2f), paint)
         
         bitmap
     }
@@ -767,16 +1222,16 @@ fun rememberMarkerBitmap(
         val padding = with(density) { 4.dp.toPx() }
         val fontSize = with(density) { 11.sp.toPx() }
         
-        val textPaint = android.graphics.Paint().apply {
+        val textPaint = Paint().apply {
             isAntiAlias = true
             textSize = fontSize
             this.color = android.graphics.Color.WHITE
-            textAlign = android.graphics.Paint.Align.CENTER
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.DEFAULT_BOLD
             setShadowLayer(6f, 0f, 2f, android.graphics.Color.BLACK)
         }
         
-        val textBounds = android.graphics.Rect()
+        val textBounds = Rect()
         if (name.isNotEmpty()) {
             textPaint.getTextBounds(name, 0, name.length, textBounds)
         }
@@ -794,23 +1249,23 @@ fun rememberMarkerBitmap(
         val centerX = width / 2f
         val shapeCenterY = height / 2f
         
-        val paint = android.graphics.Paint().apply {
+        val paint = Paint().apply {
             isAntiAlias = true
             this.color = color.toArgb()
-            style = android.graphics.Paint.Style.FILL
+            style = Paint.Style.FILL
         }
         
         // Draw Shape with shadow/border centered exactly at (centerX, shapeCenterY)
-        val borderPaint = android.graphics.Paint().apply {
+        val borderPaint = Paint().apply {
             isAntiAlias = true
             this.color = android.graphics.Color.WHITE
-            style = android.graphics.Paint.Style.STROKE
+            style = Paint.Style.STROKE
             strokeWidth = 4f
         }
 
         when (shape) {
             MarkerShape.SQUARE -> {
-                val rect = android.graphics.RectF(
+                val rect = RectF(
                     centerX - shapeSize / 2f,
                     shapeCenterY - shapeSize / 2f,
                     centerX + shapeSize / 2f,
@@ -824,7 +1279,7 @@ fun rememberMarkerBitmap(
                 canvas.drawCircle(centerX, shapeCenterY, shapeSize / 2f, borderPaint)
             }
             MarkerShape.TRIANGLE -> {
-                val path = android.graphics.Path()
+                val path = Path()
                 path.moveTo(centerX, shapeCenterY - shapeSize / 2f)
                 path.lineTo(centerX - shapeSize / 2f, shapeCenterY + shapeSize / 2f)
                 path.lineTo(centerX + shapeSize / 2f, shapeCenterY + shapeSize / 2f)
@@ -835,10 +1290,10 @@ fun rememberMarkerBitmap(
         }
         
         // Draw Center Dot at exact center
-        val dotPaint = android.graphics.Paint().apply {
+        val dotPaint = Paint().apply {
             isAntiAlias = true
             this.color = android.graphics.Color.WHITE
-            style = android.graphics.Paint.Style.FILL
+            style = Paint.Style.FILL
         }
         canvas.drawCircle(centerX, shapeCenterY, shapeSize * 0.12f, dotPaint)
         

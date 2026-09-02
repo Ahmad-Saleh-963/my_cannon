@@ -245,6 +245,7 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                         locationPermissionGranted = locationPermissionGranted,
                         allRoutes = allRoutes,
                         selectedRouteIndex = selectedRouteIndex,
+                        onSelectRoute = { offlineViewModel.selectRoute(it) },
                         destinationPoint = destinationPoint,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -327,10 +328,7 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                                                 val result = searchResults.first()
                                                 destinationPoint = result.point
                                                 offlineViewModel.onSearchQueryChanged(result.name)
-                                                mapViewportState.setCameraOptions {
-                                                    center(result.point)
-                                                    zoom(14.0)
-                                                }
+                                                
                                                 val currentLoc = viewModel.getLastLocation()
                                                 val start = if (currentLoc != null) {
                                                     Point.fromLngLat(currentLoc.second, currentLoc.first)
@@ -373,10 +371,7 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                                                     onClick = {
                                                         destinationPoint = result.point
                                                         offlineViewModel.onSearchQueryChanged(result.name)
-                                                        mapViewportState.setCameraOptions {
-                                                            center(result.point)
-                                                            zoom(14.0)
-                                                        }
+                                                        
                                                         val currentLoc = viewModel.getLastLocation()
                                                         val start = if (currentLoc != null) {
                                                             Point.fromLngLat(currentLoc.second, currentLoc.first)

@@ -3,7 +3,10 @@ package com.ahmadsaleh.map.ui.viewmodel
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
+import android.location.Location
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -21,6 +24,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
+import kotlin.math.roundToInt
 
 class CannonViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -121,6 +125,111 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ─── الموقع ───────────────────────────────────────────────────────────────
+    // ─── الموقع والسرعة اللحظية المباشرة والمعدل الذكي ───────────────────────
+    var currentSpeedKmh by mutableFloatStateOf(0f)
+        private set
+    var currentSpeedDisplay by mutableIntStateOf(0)
+        private set
+    var averageMovingSpeedKmh by mutableFloatStateOf(40f)
+        private set
+    var topSpeedKmh by mutableFloatStateOf(0f)
+        private set
+    var isMoving by mutableStateOf(false)
+        private set
+    var lastGpsFixTime by mutableStateOf(0L)
+        private set
+
+    private var previousLocation: Location? = null
+    private var smoothedSpeedKmh = 0f
+    private val speedHistory = ArrayDeque<Float>()
+
+    /**
+     * لمعالجة تحديثات الموقع وحساب السرعة اللحظية بدقة عالية وبطريقة احترافية فائقة الاستجابة
+     * تعتمد على Doppler hardware speed أولاً ثم الدلتا المكانية والزمنية دقيقة جداً
+     * مع مرشح تكيفي ذكي وحساب معدل حركة السائق بدقة متناهية
+     */
+    fun processLocationUpdate(location: Location) {
+        lastGpsFixTime = System.currentTimeMillis()
+
+        // تجاهل القراءات ذات الدقة المنخفضة جداً (أكبر من 30 متر) لمنع القفزات الخاطئة
+        if (location.hasAccuracy() && location.accuracy > 30f) {
+            return
+        }
+
+        var rawSpeedMs = -1f
+
+        // 1. القراءة المباشرة من مستشعر سرعة GPS العتادي (Doppler effect)
+        if (location.hasSpeed() && location.speed >= 0f) {
+            rawSpeedMs = location.speed
+        } else {
+            // 2. الحساب البديل: المسافة المقطوعة / الفارق الزمني (Δd / Δt)
+            previousLocation?.let { prev ->
+                val timeDiffSec = (location.time - prev.time) / 1000.0f
+                if (timeDiffSec in 0.15f..5.0f) {
+                    val distanceMeters = prev.distanceTo(location)
+                    rawSpeedMs = distanceMeters / timeDiffSec
+                }
+            }
+        }
+
+        previousLocation = location
+
+        // حفظ آخر موقع في الملاحظات والكاش
+        saveLastLocation(location.latitude, location.longitude)
+
+        if (cannonPos == null) {
+            val geo = GeoPoint(location.latitude, location.longitude)
+            val utm = UtmConverter.fromGeoToUtm(geo)
+            updatePointFull(
+                point = null,
+                type = PointType.CANNON,
+                name = "المربط",
+                description = "",
+                elevation = 0.0,
+                geo = geo,
+                utm = utm
+            )
+        }
+
+        if (rawSpeedMs < 0f) return
+
+        var rawSpeedKmh = rawSpeedMs * 3.6f
+
+        // 3. عتبة السكون (Deadband noise gate): إذا كانت السرعة أقل من 0.8 كم/س نعتبرها 0
+        if (rawSpeedKmh < 0.8f) {
+            rawSpeedKmh = 0f
+        }
+
+        // 4. تتبع معدل السرعة أثناء الحركة (Sliding window)
+        if (rawSpeedKmh >= 5.0f) {
+            speedHistory.addLast(rawSpeedKmh)
+            if (speedHistory.size > 30) speedHistory.removeFirst()
+            averageMovingSpeedKmh = speedHistory.average().toFloat()
+        }
+
+        // 5. مرشح تكيفي زمني ذكي جداً واستجابة لحظية فورية
+        val speedDiff = kotlin.math.abs(rawSpeedKmh - smoothedSpeedKmh)
+        val alpha = when {
+            rawSpeedKmh == 0f -> 0.85f // توقف فوري حاد
+            speedDiff > 8f -> 0.70f // تسارع أو تباطؤ مفاجئ -> استجابة لحظية عالية جداً
+            else -> 0.45f // سرعة منتظمة لتنعيم القراءة
+        }
+
+        smoothedSpeedKmh = (alpha * rawSpeedKmh) + ((1f - alpha) * smoothedSpeedKmh)
+
+        if (smoothedSpeedKmh < 0.5f) {
+            smoothedSpeedKmh = 0f
+        }
+
+        currentSpeedKmh = smoothedSpeedKmh
+        currentSpeedDisplay = smoothedSpeedKmh.roundToInt()
+        isMoving = currentSpeedKmh > 1.0f
+
+        if (currentSpeedKmh > topSpeedKmh) {
+            topSpeedKmh = currentSpeedKmh
+        }
+    }
+
     fun saveLastLocation(lat: Double, lon: Double) {
         sharedPrefs.edit().apply {
             putFloat("last_lat", lat.toFloat())

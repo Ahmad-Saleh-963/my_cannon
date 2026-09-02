@@ -378,12 +378,27 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun selectRoute(index: Int) {
+        if (index in 0 until _currentRoutes.value.size) {
+            _selectedRouteIndex.value = index
+        }
+    }
+
     private suspend fun fetchOnlineRoutes(start: Point, destination: Point) = withContext(Dispatchers.IO) {
         try {
             val token = getApplication<Application>().getString(R.string.mapbox_access_token)
-            // طلب 3 مسارات بديلة
-            val url = "https://api.mapbox.com/directions/v5/mapbox/driving/${start.longitude()},${start.latitude()};${destination.longitude()},${destination.latitude()}?geometries=geojson&overview=full&alternatives=true&access_token=$token"
-            val response = URL(url).readText()
+            // طلب كافة المسارات المتاحة والبديلة مع الازدحام المروري
+            val profile = "mapbox/driving-traffic"
+            val url = "https://api.mapbox.com/directions/v5/$profile/${start.longitude()},${start.latitude()};${destination.longitude()},${destination.latitude()}?geometries=geojson&overview=full&alternatives=true&continue_straight=true&access_token=$token"
+            
+            val response = try {
+                URL(url).readText()
+            } catch (e: Exception) {
+                // المحاولة البديلة باستخدام التوجيه الافتراضي للسيارات إذا لم تتوفر بيانات حركة المرور
+                val fallbackUrl = "https://api.mapbox.com/directions/v5/mapbox/driving/${start.longitude()},${start.latitude()};${destination.longitude()},${destination.latitude()}?geometries=geojson&overview=full&alternatives=true&access_token=$token"
+                URL(fallbackUrl).readText()
+            }
+
             val json = JSONObject(response)
             val routesJson = json.getJSONArray("routes")
             
@@ -394,7 +409,13 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
                 val geometry = LineString.fromJson(geometryJson.toString())
                 val duration = (route.getDouble("duration") / 60.0).toInt()
                 val distance = route.getDouble("distance") / 1000.0
-                val summary = if (route.has("summary")) route.getString("summary") else "مسار ${i+1}"
+                val summary = if (route.has("summary") && route.getString("summary").isNotBlank()) {
+                    route.getString("summary")
+                } else if (i == 0) {
+                    "المسار الرئيسي"
+                } else {
+                    "طريق بديل $i"
+                }
                 
                 routesList.add(RouteInfo(geometry, duration, distance, summary))
             }
