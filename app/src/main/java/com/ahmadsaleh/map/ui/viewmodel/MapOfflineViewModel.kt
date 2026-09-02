@@ -18,6 +18,7 @@ import com.ahmadsaleh.map.data.db.entity.CachedRouteEntity
 import com.ahmadsaleh.map.domain.calculator.OfflineRoadNetworkRouter
 import com.ahmadsaleh.map.domain.calculator.SmartRouteMatcher
 import com.ahmadsaleh.map.service.MapDownloadService
+import com.ahmadsaleh.map.service.MapboxOfflineRegistry
 import com.google.android.gms.location.LocationServices
 import com.mapbox.common.TileStore
 import com.mapbox.common.TileRegionLoadOptions
@@ -52,7 +53,8 @@ data class ProvinceOfflineState(
     val speed: String = "",
     val completedResources: Long = 0,
     val totalResources: Long = 0,
-    val status: String = ""
+    val status: String = "",
+    val targetZoom: Int = 16
 )
 
 data class SearchResult(
@@ -80,8 +82,12 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
         folder.absolutePath
     }
 
-    private val tileStore: TileStore = TileStore.create(mapRootPath)
-    private val offlineManager: OfflineManager = OfflineManager()
+    private val tileStore: TileStore by lazy {
+        MapboxOfflineRegistry.getTileStore(application)
+    }
+    private val offlineManager: OfflineManager by lazy {
+        MapboxOfflineRegistry.getOfflineManager()
+    }
 
     private val _provinces = MutableStateFlow<List<ProvinceOfflineState>>(emptyList())
     val provinces: StateFlow<List<ProvinceOfflineState>> = _provinces.asStateFlow()
@@ -105,11 +111,59 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
     private val _proResults = MutableStateFlow<List<SearchResult>>(emptyList())
     val proResults: StateFlow<List<SearchResult>> = _proResults.asStateFlow()
 
+    private val _downloadedRegionIds = MutableStateFlow<Set<String>>(emptySet())
+
     init {
         loadProvinces()
         loadTacticalPois()
-        refreshDownloadedStates()
+        syncTileStoreRegions()
         checkAndResumeDownloads()
+        startLiveProgressObserver()
+    }
+
+    fun syncTileStoreRegions() {
+        tileStore.getAllTileRegions { expected ->
+            if (expected.isValue) {
+                _downloadedRegionIds.value = expected.value!!.map { it.id }.toSet()
+                refreshDownloadedStates()
+            }
+        }
+    }
+
+    fun refreshDownloadedStates() {
+        val regionIds = _downloadedRegionIds.value
+
+        _provinces.value = _provinces.value.map { province ->
+            val isInterrupted = prefs.getBoolean("downloading_${province.name}", false)
+            val storedP = prefs.getFloat("progress_${province.name}", 0f)
+            val speed = prefs.getString("speed_${province.name}", "0 KB/s") ?: "0 KB/s"
+            val sizeMB = prefs.getString("size_${province.name}", "") ?: ""
+            val completed = prefs.getLong("completed_${province.name}", 0L)
+            val total = prefs.getLong("total_${province.name}", 0L)
+            val savedStatus = prefs.getString("status_${province.name}", null)
+
+            val isDownloaded = regionIds.contains(province.name)
+            val isDownloading = isInterrupted && !isDownloaded
+            val effectiveP = if (isDownloaded) 1f else if (storedP > 0f) maxOf(province.progress, storedP) else province.progress
+
+            val currentStatus = when {
+                isDownloaded -> "مكتمل"
+                isDownloading -> if (total > 0) "جاري التحميل بالخلفية..." else "جاري تجهيز المصادر..."
+                savedStatus != null -> savedStatus
+                else -> province.status
+            }
+
+            province.copy(
+                isDownloaded = isDownloaded,
+                isDownloading = isDownloading,
+                progress = effectiveP,
+                speed = speed,
+                size = sizeMB,
+                completedResources = completed,
+                totalResources = total,
+                status = currentStatus
+            )
+        }
     }
 
     private fun loadTacticalPois() {
@@ -146,32 +200,28 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
         )
     }
 
-    fun downloadAllProvinces() {
+    fun downloadAllProvinces(globalZoom: Int = 16) {
         _provinces.value.forEach { province ->
             if (!province.isDownloaded && !province.isDownloading) {
-                downloadProvince(province.name)
+                downloadProvince(province.name, globalZoom)
             }
         }
     }
 
-    private fun startSmartAutoDownload() {
-        if (ContextCompat.checkSelfPermission(getApplication(), Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            return
-        }
-
-        val fusedLocationClient = LocationServices.getFusedLocationProviderClient(getApplication())
-        
-        try {
-            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
-                val targetLoc = location ?: android.location.Location("").apply { 
-                    latitude = 33.5138; longitude = 36.2765 // دمشق كخيار احتياطي
-                }
-                
-                val intent = android.content.Intent(getApplication(), com.ahmadsaleh.map.service.MapDownloadService::class.java).apply {
-                    putExtra("MODE", "SMART_AUTO")
-                    putExtra("LAT", targetLoc.latitude)
-                    putExtra("LON", targetLoc.longitude)
-                    putExtra("ROOT_PATH", mapRootPath)
+    private fun checkAndResumeDownloads() {
+        val downloadingProvinces = _provinces.value.filter { prefs.getBoolean("downloading_${it.name}", false) && !it.isDownloaded }
+        if (downloadingProvinces.isNotEmpty()) {
+            for (p in downloadingProvinces) {
+                val z = prefs.getInt("zoom_${p.name}", 16)
+                val intent = Intent(getApplication(), MapDownloadService::class.java).apply {
+                    action = "ADD_TASK"
+                    putExtra("PROVINCE_NAME", p.name)
+                    putExtra("PROVINCE_NAME_AR", p.nameAr)
+                    putExtra("WEST", p.bbox.west())
+                    putExtra("SOUTH", p.bbox.south())
+                    putExtra("EAST", p.bbox.east())
+                    putExtra("NORTH", p.bbox.north())
+                    putExtra("MAX_ZOOM", z)
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     getApplication<Application>().startForegroundService(intent)
@@ -179,54 +229,20 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
                     getApplication<Application>().startService(intent)
                 }
             }
-        } catch (e: SecurityException) {
-            e.printStackTrace()
+            startLiveProgressObserver()
         }
     }
 
-    fun refreshDownloadedStates() {
-        tileStore.getAllTileRegions { expected ->
-            if (expected.isValue) {
-                val regionIds = expected.value!!.map { it.id }
-                _provinces.value = _provinces.value.map { province ->
-                    val isInterrupted = prefs.getBoolean("downloading_${province.name}", false)
-                    val p = prefs.getFloat("progress_${province.name}", 0f)
-                    val speed = prefs.getString("speed_${province.name}", "0 KB/s") ?: "0 KB/s"
-                    val sizeMB = prefs.getString("size_${province.name}", "") ?: ""
-                    val completed = prefs.getLong("completed_${province.name}", 0L)
-                    val total = prefs.getLong("total_${province.name}", 0L)
-
-                    val isDownloaded = regionIds.contains(province.name)
-                    val isDownloading = isInterrupted && !isDownloaded
-
-                    province.copy(
-                        isDownloaded = isDownloaded,
-                        isDownloading = isDownloading,
-                        progress = if (isDownloaded) 1f else p,
-                        speed = speed,
-                        size = sizeMB,
-                        completedResources = completed,
-                        totalResources = total,
-                        status = if (isDownloaded) "مكتمل" else if (isDownloading) "جاري التحميل بالخلفية..." else province.status
-                    )
-                }
-            }
-        }
-    }
-
-    private fun checkAndResumeDownloads() {
-        _provinces.value.forEach { province ->
-            if (province.isDownloading) downloadProvince(province.name)
-        }
-        if (_autoDownloadEnabled.value) startSmartAutoDownload()
-    }
-
-    fun downloadProvince(provinceName: String) {
+    fun downloadProvince(provinceName: String, customZoom: Int? = null) {
         val province = _provinces.value.find { it.name == provinceName } ?: return
+        val zoomToUse = customZoom ?: prefs.getInt("zoom_$provinceName", province.targetZoom)
         
-        prefs.edit { putBoolean("downloading_$provinceName", true) }
+        prefs.edit { 
+            putBoolean("downloading_$provinceName", true)
+            putInt("zoom_$provinceName", zoomToUse)
+        }
         updateProvinceState(provinceName) { 
-            it.copy(isDownloading = true, progress = 0f, status = "جاري التحميل بالخلفية...") 
+            it.copy(isDownloading = true, targetZoom = zoomToUse, status = "جاري التحميل بالخلفية...") 
         }
 
         val intent = Intent(getApplication(), MapDownloadService::class.java).apply {
@@ -237,7 +253,7 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
             putExtra("SOUTH", province.bbox.south())
             putExtra("EAST", province.bbox.east())
             putExtra("NORTH", province.bbox.north())
-            putExtra("MAX_ZOOM", 16)
+            putExtra("MAX_ZOOM", zoomToUse)
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -251,9 +267,9 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun startLiveProgressObserver() {
         viewModelScope.launch {
-            while (_provinces.value.any { it.isDownloading }) {
-                delay(500.milliseconds)
+            while (true) {
                 refreshDownloadedStates()
+                delay(500.milliseconds)
             }
         }
     }

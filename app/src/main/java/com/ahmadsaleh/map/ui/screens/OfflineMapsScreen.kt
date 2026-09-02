@@ -3,7 +3,6 @@ package com.ahmadsaleh.map.ui.screens
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -39,8 +38,14 @@ fun OfflineMapsScreen(
     val provinces by viewModel.provinces.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
 
+    LaunchedEffect(Unit) {
+        viewModel.refreshDownloadedStates()
+    }
+
     var activeFilter by remember { mutableStateOf(OfflineFilter.ALL) }
     var showDownloadAllDialog by remember { mutableStateOf(false) }
+    var provinceForDownloadDialog by remember { mutableStateOf<ProvinceOfflineState?>(null) }
+    var globalZoomAll by remember { mutableIntStateOf(16) }
 
     val filteredProvinces = remember(provinces, searchQuery, activeFilter) {
         provinces.filter { province ->
@@ -65,6 +70,18 @@ fun OfflineMapsScreen(
         uri?.let { viewModel.importMapFromFolder(it.toString()) }
     }
 
+    provinceForDownloadDialog?.let { targetProvince ->
+        ProvinceDownloadDialog(
+            provinceNameAr = targetProvince.nameAr,
+            initialZoom = targetProvince.targetZoom,
+            onConfirm = { chosenZoom ->
+                viewModel.downloadProvince(targetProvince.name, chosenZoom)
+                provinceForDownloadDialog = null
+            },
+            onDismiss = { provinceForDownloadDialog = null }
+        )
+    }
+
     if (showDownloadAllDialog) {
         AlertDialog(
             onDismissRequest = { showDownloadAllDialog = false },
@@ -76,21 +93,45 @@ fun OfflineMapsScreen(
                 }
             },
             text = {
-                Text(
-                    "سيتم البدء بتحميل خرائط كافة المحافظات والمدن السورية الـ 14 بجميع تفاصيلها الدقيقة (الشارع والبناء والبحث والملاحة الميدانية) للعمل أوفلاين 100%.",
-                    color = Color.LightGray,
-                    fontSize = 13.sp
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "اختر مستوى الدقة الجغرافية الافتراضية لتحميل كافة المحافظات الـ 14 أوفلاين:",
+                        color = Color.LightGray,
+                        fontSize = 12.sp
+                    )
+
+                    ZoomOptionItem(
+                        title = "🌟 دقة الشارع والبناء (Zoom 16 - موصى به)",
+                        subtitle = "تغطية الشوارع والأبنية في جميع المدن والبلدات.",
+                        selected = globalZoomAll == 16,
+                        onClick = { globalZoomAll = 16 }
+                    )
+
+                    ZoomOptionItem(
+                        title = "🚀 دقة فائقة الميدان (Zoom 18 - دقة قصوى)",
+                        subtitle = "أقصى دقة تفصيلية لأرقام الأبنية والممرات الميدانية.",
+                        selected = globalZoomAll == 18,
+                        onClick = { globalZoomAll = 18 }
+                    )
+
+                    ZoomOptionItem(
+                        title = "⚡ دقة متوسطة (Zoom 14 - الطرق والمدن)",
+                        subtitle = "المدن والمحاور والطرق الرئيسية والبديلة.",
+                        selected = globalZoomAll == 14,
+                        onClick = { globalZoomAll = 14 }
+                    )
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        viewModel.downloadAllProvinces()
+                        viewModel.downloadAllProvinces(globalZoomAll)
                         showDownloadAllDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A84FF), contentColor = Color.White)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A84FF), contentColor = Color.White),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("بدء تحميل الكل", fontWeight = FontWeight.Bold)
+                    Text("بدء تحميل الكل (Zoom $globalZoomAll)", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -98,8 +139,8 @@ fun OfflineMapsScreen(
                     Text("إلغاء", color = Color.Gray)
                 }
             },
-            containerColor = Color(0xFF1C1C1E),
-            shape = RoundedCornerShape(20.dp)
+            containerColor = Color(0xFF161E2E),
+            shape = RoundedCornerShape(22.dp)
         )
     }
 
@@ -109,7 +150,7 @@ fun OfflineMapsScreen(
                 title = {
                     Column {
                         Text("خرائط الميدان والمحافظات", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
-                        Text("تحميل أوفلاين كامل للمدن والبحث والتوجيه", fontSize = 11.sp, color = Color.Gray)
+                        Text("تحميل أوفلاين كامل مع تحديد دقة الشارع", fontSize = 11.sp, color = Color.Gray)
                     }
                 },
                 navigationIcon = {
@@ -139,39 +180,91 @@ fun OfflineMapsScreen(
                 .padding(padding)
                 .fillMaxSize()
         ) {
-            // شريط المعلومات التوضيحي للأوفلاين
+            // لوحة قيادة التغطية الكلية (Offline Download Dashboard Header Card)
+            val downloadedCount = provinces.count { it.isDownloaded }
+            val overallProgress = downloadedCount / 14f
+
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                shape = RoundedCornerShape(16.dp),
-                color = Color(0xFF121929),
-                border = BorderStroke(1.dp, Color(0xFF0A84FF).copy(alpha = 0.3f))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(20.dp),
+                color = Color(0xFF121826),
+                border = BorderStroke(1.dp, Color(0xFF0A84FF).copy(alpha = 0.35f))
             ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Default.Shield,
-                        contentDescription = null,
-                        tint = Color(0xFF00E5FF),
-                        modifier = Modifier.size(28.dp)
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Shield, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(26.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "لوحة جاهزية التغطية أوفلاين",
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White,
+                                fontSize = 15.sp
+                            )
+                        }
+
+                        Surface(
+                            color = Color(0xFF30D158).copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                text = "$downloadedCount / 14 محافظة",
+                                color = Color(0xFF30D158),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+
+                    LinearProgressIndicator(
+                        progress = { overallProgress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(CircleShape),
+                        color = Color(0xFF30D158),
+                        trackColor = Color(0xFF1E2838)
                     )
-                    Spacer(Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "جاهزية ميدانية أوفلاين 100%",
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            fontSize = 13.sp
-                        )
-                        Text(
-                            text = "تحميل المحافظة يوفر الخرائط والتفاصيل الدقيقة (Zoom 16) والبحث ورسم المسارات بدون إنترنت.",
-                            color = Color.Gray,
-                            fontSize = 10.5.sp,
-                            lineHeight = 14.sp
-                        )
+
+                    Spacer(Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Surface(
+                            color = Color.White.copy(alpha = 0.06f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = "🛡️ تغطية 100% أوفلاين",
+                                fontSize = 10.sp,
+                                color = Color.LightGray,
+                                modifier = Modifier.padding(vertical = 4.dp, horizontal = 6.dp)
+                            )
+                        }
+                        Surface(
+                            color = Color.White.copy(alpha = 0.06f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = "📍 إمكانية تحديد الدقة (Zoom 12-18)",
+                                fontSize = 10.sp,
+                                color = Color.LightGray,
+                                modifier = Modifier.padding(vertical = 4.dp, horizontal = 6.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -182,7 +275,7 @@ fun OfflineMapsScreen(
                 onValueChange = { viewModel.onSearchQueryChanged(it) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
                     .height(52.dp),
                 placeholder = { Text("ابحث عن مدينة أو محافظة سورية...", color = Color.Gray, fontSize = 13.sp) },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.Cyan, modifier = Modifier.size(20.dp)) },
@@ -210,10 +303,9 @@ fun OfflineMapsScreen(
             LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                val downloadedCount = provinces.count { it.isDownloaded }
                 val downloadingCount = provinces.count { it.isDownloading }
                 val availableCount = provinces.count { !it.isDownloaded && !it.isDownloading }
 
@@ -258,10 +350,133 @@ fun OfflineMapsScreen(
                 items(filteredProvinces, key = { it.name }) { province ->
                     ProvinceItem(
                         province = province,
-                        onDownload = { viewModel.downloadProvince(province.name) },
+                        onDownloadClick = { provinceForDownloadDialog = province },
                         onDelete = { viewModel.deleteProvince(province.name) }
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun ProvinceDownloadDialog(
+    provinceNameAr: String,
+    initialZoom: Int = 16,
+    onConfirm: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selectedZoom by remember { mutableIntStateOf(initialZoom) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text(
+                    text = "تحديد دقة الخريطة أوفلاين",
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White,
+                    fontSize = 17.sp
+                )
+                Text(
+                    text = provinceNameAr,
+                    color = Color(0xFF00E5FF),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "اختر مستوى التفاصيل والدقة الجغرافية التي ترغب بتحميلها أوفلاين:",
+                    color = Color.LightGray,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+
+                Spacer(Modifier.height(4.dp))
+
+                ZoomOptionItem(
+                    title = "🌟 دقة الشارع والبناء (Zoom 16 - موصى به)",
+                    subtitle = "الشوارع الفرعية والأزقة والبنايات والمعالم المحلية (متوازنة جداً).",
+                    selected = selectedZoom == 16,
+                    onClick = { selectedZoom = 16 }
+                )
+
+                ZoomOptionItem(
+                    title = "🚀 دقة فائقة الميدان (Zoom 18 - دقة قصوى)",
+                    subtitle = "أقصى دقة تفصيلية لأرقام المباني والممرات والمواقع التكتيكية.",
+                    selected = selectedZoom == 18,
+                    onClick = { selectedZoom = 18 }
+                )
+
+                ZoomOptionItem(
+                    title = "⚡ دقة متوسطة (Zoom 14 - الطرق والمدن)",
+                    subtitle = "المدن والبلدات والمحاور والطرق الرئيسية والبديلة.",
+                    selected = selectedZoom == 14,
+                    onClick = { selectedZoom = 14 }
+                )
+
+                ZoomOptionItem(
+                    title = "📦 دقة سريعة (Zoom 12 - الطرق الدولية)",
+                    subtitle = "المحافظة والحدود الإدارية والطرق الدولية فقط (حجم صغير).",
+                    selected = selectedZoom == 12,
+                    onClick = { selectedZoom = 12 }
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(selectedZoom) },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A84FF), contentColor = Color.White),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("بدء التحميل (Zoom $selectedZoom)", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("إلغاء", color = Color.Gray)
+            }
+        },
+        containerColor = Color(0xFF161E2E),
+        shape = RoundedCornerShape(22.dp)
+    )
+}
+
+@Composable
+fun ZoomOptionItem(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(14.dp),
+        color = if (selected) Color(0xFF0A84FF).copy(alpha = 0.20f) else Color.White.copy(alpha = 0.04f),
+        border = BorderStroke(
+            width = if (selected) 1.5.dp else 1.dp,
+            color = if (selected) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.12f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            RadioButton(
+                selected = selected,
+                onClick = onClick,
+                colors = RadioButtonDefaults.colors(
+                    selectedColor = Color(0xFF00E5FF),
+                    unselectedColor = Color.Gray
+                )
+            )
+            Spacer(Modifier.width(6.dp))
+            Column {
+                Text(text = title, fontWeight = FontWeight.Bold, color = Color.White, fontSize = 12.5.sp)
+                Text(text = subtitle, color = Color.Gray, fontSize = 10.5.sp, lineHeight = 14.sp)
             }
         }
     }
@@ -292,7 +507,7 @@ fun FilterChipItem(
 @Composable
 fun ProvinceItem(
     province: ProvinceOfflineState,
-    onDownload: () -> Unit,
+    onDownloadClick: () -> Unit,
     onDelete: () -> Unit
 ) {
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -315,6 +530,14 @@ fun ProvinceItem(
             containerColor = Color(0xFF1C1C1E),
             shape = RoundedCornerShape(16.dp)
         )
+    }
+
+    val zoomBadgeText = when (province.targetZoom) {
+        18 -> "دقة فائقة (Zoom 18)"
+        16 -> "دقة الشارع (Zoom 16)"
+        14 -> "دقة متوسطة (Zoom 14)"
+        12 -> "دقة سريعة (Zoom 12)"
+        else -> "Zoom ${province.targetZoom}"
     }
 
     Card(
@@ -378,7 +601,7 @@ fun ProvinceItem(
                             fontSize = 17.sp
                         )
                         Text(
-                            text = if (province.isDownloading) province.status else "تغطية كاملة للمدينة والريف (Zoom 16)",
+                            text = if (province.isDownloading) province.status else zoomBadgeText,
                             style = MaterialTheme.typography.bodySmall,
                             color = if (province.isDownloading) Color(0xFF00E5FF) else Color.Gray,
                             fontSize = 11.sp
@@ -396,7 +619,7 @@ fun ProvinceItem(
                         }
                     } else if (!province.isDownloading) {
                         Button(
-                            onClick = onDownload,
+                            onClick = onDownloadClick,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = Color(0xFF0A84FF),
                                 contentColor = Color.White
@@ -439,7 +662,7 @@ fun ProvinceItem(
                     
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
-                            text = "${province.completedResources} / ${province.totalResources} مصادر",
+                            text = if (province.totalResources > 0) "${province.completedResources} / ${province.totalResources} مصادر" else "جاري تجهيز المصادر...",
                             style = MaterialTheme.typography.labelMedium,
                             color = Color.LightGray,
                             fontWeight = FontWeight.Bold,
@@ -490,7 +713,7 @@ fun ProvinceItem(
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Text(
-                            text = "بحث + ملاحة أوفلاين",
+                            text = zoomBadgeText,
                             style = MaterialTheme.typography.labelSmall,
                             color = Color(0xFF0A84FF),
                             fontWeight = FontWeight.Bold,

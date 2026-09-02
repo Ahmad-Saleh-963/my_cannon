@@ -14,6 +14,7 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.edit
 import com.mapbox.common.TileRegionLoadOptions
@@ -22,7 +23,6 @@ import com.mapbox.geojson.Point
 import com.mapbox.geojson.Polygon
 import com.mapbox.maps.OfflineManager
 import com.mapbox.maps.TilesetDescriptorOptions
-import java.io.File
 import java.util.Locale
 
 data class ProvinceDownloadTask(
@@ -40,8 +40,12 @@ class MapDownloadService : Service() {
     private val CHANNEL_ID = "MapDownloadChannel_v2"
     private val NOTIFICATION_ID = 888
 
-    private lateinit var tileStore: TileStore
-    private lateinit var offlineManager: OfflineManager
+    private val tileStore: TileStore by lazy {
+        MapboxOfflineRegistry.getTileStore(this)
+    }
+    private val offlineManager: OfflineManager by lazy {
+        MapboxOfflineRegistry.getOfflineManager()
+    }
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
@@ -56,23 +60,32 @@ class MapDownloadService : Service() {
     override fun onCreate() {
         super.onCreate()
 
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MyCannon:DownloadWakeLock")
-        wakeLock?.acquire(30 * 60 * 1000L) // 30 mins wake lock
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MyCannon:DownloadWakeLock")
+            wakeLock?.acquire(30 * 60 * 1000L)
 
-        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        @Suppress("DEPRECATION")
-        wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "MyCannon:WifiLock")
-        wifiLock?.acquire()
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            @Suppress("DEPRECATION")
+            wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "MyCannon:WifiLock")
+            wifiLock?.acquire()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
         requestHighPriorityNetwork()
-
-        val folder = File(filesDir, "mymap")
-        if (!folder.exists()) folder.mkdirs()
-        tileStore = TileStore.create(folder.absolutePath)
-        offlineManager = OfflineManager()
-
         createNotificationChannel()
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        return try {
+            val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val network = connectivityManager.activeNetwork ?: return false
+            val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        } catch (_: Exception) {
+            true
+        }
     }
 
     private fun requestHighPriorityNetwork() {
@@ -127,8 +140,20 @@ class MapDownloadService : Service() {
 
         val task = downloadQueue.removeFirst()
         currentTask = task
-        isDownloading = true
 
+        if (!isNetworkAvailable()) {
+            val prefs = getSharedPreferences("map_download_prefs", Context.MODE_PRIVATE)
+            prefs.edit {
+                remove("downloading_${task.name}")
+                putString("status_${task.name}", "لا يوجد اتصال بالإنترنت")
+            }
+            Toast.makeText(this, "لا يوجد اتصال بالإنترنت للبدء بالتحميل", Toast.LENGTH_SHORT).show()
+            currentTask = null
+            processNextTask()
+            return
+        }
+
+        isDownloading = true
         lastUpdateTime = System.currentTimeMillis()
         lastResourceSize = 0L
 
@@ -140,6 +165,7 @@ class MapDownloadService : Service() {
         prefs.edit {
             putBoolean("downloading_${task.name}", true)
             putFloat("progress_${task.name}", 0f)
+            remove("status_${task.name}")
         }
 
         val polygon = Polygon.fromLngLats(listOf(listOf(
@@ -180,11 +206,18 @@ class MapDownloadService : Service() {
                     prefs.getString("speed_${task.name}", "0 KB/s") ?: "0 KB/s"
                 }
 
-                val p = if (progress.requiredResourceCount > 0) {
-                    progress.completedResourceCount.toFloat() / progress.requiredResourceCount.toFloat()
-                } else 0f
+                val currentP = prefs.getFloat("progress_${task.name}", 0f)
 
-                val percentInt = (p * 100).toInt()
+                val rawP = when {
+                    progress.requiredResourceCount > 0 -> {
+                        (progress.completedResourceCount.toFloat() / progress.requiredResourceCount.toFloat()).coerceIn(0f, 1f)
+                    }
+                    else -> 0f
+                }
+
+                val p = if (rawP > 0f) maxOf(currentP, rawP) else currentP
+
+                val percentInt = (p * 100).toInt().coerceIn(0, 100)
                 val sizeMB = String.format(Locale.US, "%.1f MB", progress.completedResourceSize / (1024.0 * 1024.0))
 
                 prefs.edit {
@@ -200,14 +233,13 @@ class MapDownloadService : Service() {
             },
             { expected ->
                 isDownloading = false
-                if (expected.isValue) {
-                    prefs.edit {
-                        remove("downloading_${task.name}")
+                prefs.edit {
+                    remove("downloading_${task.name}")
+                    if (expected.isValue) {
                         putFloat("progress_${task.name}", 1f)
-                    }
-                } else {
-                    prefs.edit {
-                        remove("downloading_${task.name}")
+                        remove("status_${task.name}")
+                    } else {
+                        putString("status_${task.name}", "فشل التحميل - حاول مجدداً")
                     }
                 }
                 currentTask = null
@@ -218,28 +250,45 @@ class MapDownloadService : Service() {
 
     private fun startForegroundNotification(title: String, progress: Int) {
         val notification = createNotification(title, progress)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            try {
+                startForeground(NOTIFICATION_ID, notification)
+            } catch (e2: Exception) {
+                e2.printStackTrace()
+            }
         }
     }
 
     private fun updateNotification(contentText: String, progress: Int) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, createNotification(contentText, progress))
+        try {
+            manager.notify(NOTIFICATION_ID, createNotification(contentText, progress))
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun showCompletionNotification(message: String) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("خريطة الميدان أوفلاين")
-            .setContentText(message)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .build()
-        manager.notify(NOTIFICATION_ID + 1, notif)
+        try {
+            val notif = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("خريطة الميدان أوفلاين")
+                .setContentText(message)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .build()
+            manager.notify(NOTIFICATION_ID + 1, notif)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun createNotificationChannel() {
@@ -261,7 +310,7 @@ class MapDownloadService : Service() {
             .setContentTitle("تنزيل الخرائط الميدانية أوفلاين 📡")
             .setContentText(contentText)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setProgress(100, progress, progress == 0)
+            .setProgress(100, progress.coerceIn(0, 100), progress == 0)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
@@ -274,11 +323,10 @@ class MapDownloadService : Service() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        try {
             stopForeground(STOP_FOREGROUND_DETACH)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
         stopSelf()
     }
