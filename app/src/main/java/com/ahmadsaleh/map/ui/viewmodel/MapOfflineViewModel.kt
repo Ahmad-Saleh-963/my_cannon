@@ -3,11 +3,13 @@ package com.ahmadsaleh.map.ui.viewmodel
 import android.Manifest
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ahmadsaleh.map.R
@@ -15,6 +17,7 @@ import com.ahmadsaleh.map.data.db.AppDatabase
 import com.ahmadsaleh.map.data.db.entity.CachedRouteEntity
 import com.ahmadsaleh.map.domain.calculator.OfflineRoadNetworkRouter
 import com.ahmadsaleh.map.domain.calculator.SmartRouteMatcher
+import com.ahmadsaleh.map.service.MapDownloadService
 import com.google.android.gms.location.LocationServices
 import com.mapbox.common.TileStore
 import com.mapbox.common.TileRegionLoadOptions
@@ -187,9 +190,24 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
                 val regionIds = expected.value!!.map { it.id }
                 _provinces.value = _provinces.value.map { province ->
                     val isInterrupted = prefs.getBoolean("downloading_${province.name}", false)
+                    val p = prefs.getFloat("progress_${province.name}", 0f)
+                    val speed = prefs.getString("speed_${province.name}", "0 KB/s") ?: "0 KB/s"
+                    val sizeMB = prefs.getString("size_${province.name}", "") ?: ""
+                    val completed = prefs.getLong("completed_${province.name}", 0L)
+                    val total = prefs.getLong("total_${province.name}", 0L)
+
+                    val isDownloaded = regionIds.contains(province.name)
+                    val isDownloading = isInterrupted && !isDownloaded
+
                     province.copy(
-                        isDownloaded = regionIds.contains(province.name),
-                        isDownloading = isInterrupted && !regionIds.contains(province.name)
+                        isDownloaded = isDownloaded,
+                        isDownloading = isDownloading,
+                        progress = if (isDownloaded) 1f else p,
+                        speed = speed,
+                        size = sizeMB,
+                        completedResources = completed,
+                        totalResources = total,
+                        status = if (isDownloaded) "مكتمل" else if (isDownloading) "جاري التحميل بالخلفية..." else province.status
                     )
                 }
             }
@@ -198,86 +216,46 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun checkAndResumeDownloads() {
         _provinces.value.forEach { province ->
-            if (province.isDownloading) resumeDownload(province.name)
+            if (province.isDownloading) downloadProvince(province.name)
         }
         if (_autoDownloadEnabled.value) startSmartAutoDownload()
     }
 
-    private var lastResourceSizeMap = mutableMapOf<String, Long>()
-    private var lastUpdateTimeMap = mutableMapOf<String, Long>()
-
     fun downloadProvince(provinceName: String) {
-        prefs.edit {putBoolean("downloading_$provinceName", true)}
-        startLoading(provinceName)
-    }
-
-    private fun resumeDownload(provinceName: String) {
-        startLoading(provinceName)
-    }
-
-    private fun startLoading(provinceName: String) {
         val province = _provinces.value.find { it.name == provinceName } ?: return
-        updateProvinceState(provinceName) { it.copy(isDownloading = true, progress = 0f, status = "متابعة التحميل...") }
+        
+        prefs.edit { putBoolean("downloading_$provinceName", true) }
+        updateProvinceState(provinceName) { 
+            it.copy(isDownloading = true, progress = 0f, status = "جاري التحميل بالخلفية...") 
+        }
 
-        lastResourceSizeMap[provinceName] = 0L
-        lastUpdateTimeMap[provinceName] = System.currentTimeMillis()
+        val intent = Intent(getApplication(), MapDownloadService::class.java).apply {
+            action = "ADD_TASK"
+            putExtra("PROVINCE_NAME", province.name)
+            putExtra("PROVINCE_NAME_AR", province.nameAr)
+            putExtra("WEST", province.bbox.west())
+            putExtra("SOUTH", province.bbox.south())
+            putExtra("EAST", province.bbox.east())
+            putExtra("NORTH", province.bbox.north())
+            putExtra("MAX_ZOOM", 16)
+        }
 
-        val polygon = Polygon.fromLngLats(listOf(listOf(
-            Point.fromLngLat(province.bbox.west(), province.bbox.south()),
-            Point.fromLngLat(province.bbox.east(), province.bbox.south()),
-            Point.fromLngLat(province.bbox.east(), province.bbox.north()),
-            Point.fromLngLat(province.bbox.west(), province.bbox.north()),
-            Point.fromLngLat(province.bbox.west(), province.bbox.south())
-        )))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            getApplication<Application>().startForegroundService(intent)
+        } else {
+            getApplication<Application>().startService(intent)
+        }
 
-        val mapDescriptor = offlineManager.createTilesetDescriptor(
-            TilesetDescriptorOptions.Builder()
-                .styleURI("mapbox://styles/mapbox/satellite-streets-v12")
-                .minZoom(0)
-                .maxZoom(16) // مستوى زوم عالي جداً (Zoom 16) لتحميل كامل أزقة وبنايات المدينة والمحافظة أوفلاين
-                .build()
-        )
+        startLiveProgressObserver()
+    }
 
-        tileStore.loadTileRegion(
-            provinceName,
-            TileRegionLoadOptions.Builder()
-                .geometry(polygon)
-                .descriptors(listOf(mapDescriptor))
-                .acceptExpired(true)
-                .build(),
-            { progress ->
-                val currentTime = System.currentTimeMillis()
-                val lastTime = lastUpdateTimeMap[provinceName] ?: currentTime
-                val lastSize = lastResourceSizeMap[provinceName] ?: 0L
-                val timeDiff = (currentTime - lastTime) / 1000.0
-                val sizeDiff = progress.completedResourceSize - lastSize
-                
-                val speedStr = if (timeDiff > 0.8) {
-                    val speedKB = (sizeDiff / 1024.0) / timeDiff
-                    lastUpdateTimeMap[provinceName] = currentTime
-                    lastResourceSizeMap[provinceName] = progress.completedResourceSize
-                    if (speedKB > 1024) String.format(Locale.US, "%.1f MB/s", speedKB / 1024.0) 
-                    else String.format(Locale.US, "%.1f KB/s", speedKB)
-                } else {
-                    _provinces.value.find { it.name == provinceName }?.speed ?: "0 KB/s"
-                }
-
-                val p = if (progress.requiredResourceCount > 0) progress.completedResourceCount.toFloat() / progress.requiredResourceCount.toFloat() else 0f
-                val sizeMB = String.format(Locale.US, "%.1f MB", progress.completedResourceSize / (1024.0 * 1024.0))
-
-                updateProvinceState(provinceName) { 
-                    it.copy(progress = p, completedResources = progress.completedResourceCount, totalResources = progress.requiredResourceCount, size = sizeMB, speed = speedStr, status = "جاري المزامنة...") 
-                }
-            },
-            { expected ->
-                if (expected.isValue) {
-                    prefs.edit { remove("downloading_$provinceName") }
-                    updateProvinceState(provinceName) { it.copy(isDownloading = false, isDownloaded = true, progress = 1f, status = "مكتمل", speed = "") }
-                } else {
-                    updateProvinceState(provinceName) { it.copy(isDownloading = false, status = "متوقف مؤقتاً") }
-                }
+    private fun startLiveProgressObserver() {
+        viewModelScope.launch {
+            while (_provinces.value.any { it.isDownloading }) {
+                delay(500.milliseconds)
+                refreshDownloadedStates()
             }
-        )
+        }
     }
 
     fun deleteProvince(provinceName: String) {

@@ -12,35 +12,53 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.os.Build
-import android.os.Environment
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
-import com.mapbox.common.TileStore
+import androidx.core.content.edit
 import com.mapbox.common.TileRegionLoadOptions
+import com.mapbox.common.TileStore
 import com.mapbox.geojson.Point
 import com.mapbox.geojson.Polygon
 import com.mapbox.maps.OfflineManager
 import com.mapbox.maps.TilesetDescriptorOptions
 import java.io.File
+import java.util.Locale
+
+data class ProvinceDownloadTask(
+    val name: String,
+    val nameAr: String,
+    val west: Double,
+    val south: Double,
+    val east: Double,
+    val north: Double,
+    val maxZoom: Int = 16
+)
 
 class MapDownloadService : Service() {
 
-    private val CHANNEL_ID = "MapDownloadChannel"
-    private val NOTIFICATION_ID = 101
-    
+    private val CHANNEL_ID = "MapDownloadChannel_v2"
+    private val NOTIFICATION_ID = 888
+
     private lateinit var tileStore: TileStore
     private lateinit var offlineManager: OfflineManager
-    
+
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
+    private val downloadQueue = ArrayDeque<ProvinceDownloadTask>()
+    private var isDownloading = false
+    private var currentTask: ProvinceDownloadTask? = null
+
+    private var lastUpdateTime = 0L
+    private var lastResourceSize = 0L
+
     override fun onCreate() {
         super.onCreate()
-        
+
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MyCannon:DownloadWakeLock")
-        wakeLock?.acquire(10 * 60 * 1000L)
+        wakeLock?.acquire(30 * 60 * 1000L) // 30 mins wake lock
 
         val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         @Suppress("DEPRECATION")
@@ -49,62 +67,157 @@ class MapDownloadService : Service() {
 
         requestHighPriorityNetwork()
 
-        // استخدام نفس المسار الآمن
         val folder = File(filesDir, "mymap")
         if (!folder.exists()) folder.mkdirs()
-        val path = folder.absolutePath
-        
-        tileStore = TileStore.create(path)
+        tileStore = TileStore.create(folder.absolutePath)
         offlineManager = OfflineManager()
+
         createNotificationChannel()
     }
 
     private fun requestHighPriorityNetwork() {
-        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
-        
-        connectivityManager.requestNetwork(request, object : ConnectivityManager.NetworkCallback() {})
+        try {
+            val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val request = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            connectivityManager.requestNetwork(request, object : ConnectivityManager.NetworkCallback() {})
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val mode = intent?.getStringExtra("MODE") ?: "SINGLE"
-        
-        if (mode == "SMART_AUTO") {
-            val lat = intent?.getDoubleExtra("LAT", 0.0) ?: 0.0
-            val lon = intent?.getDoubleExtra("LON", 0.0) ?: 0.0
-            if (lat != 0.0 && lon != 0.0) {
-                startForegroundNotification("الجاهزية التلقائية")
-                startSmartAutoDownload(lat, lon)
-            } else {
-                stopSelf()
-            }
-        } else {
-            val provinceName = intent?.getStringExtra("PROVINCE_NAME") ?: return START_NOT_STICKY
-            val w = intent.getDoubleExtra("WEST", 0.0)
-            val s = intent.getDoubleExtra("SOUTH", 0.0)
-            val e = intent.getDoubleExtra("EAST", 0.0)
-            val n = intent.getDoubleExtra("NORTH", 0.0)
-            
-            startForegroundNotification("تحميل: $provinceName")
-            downloadMap(provinceName, w, s, e, n, 14)
+        val action = intent?.action ?: "ADD_TASK"
+
+        if (action == "STOP_SERVICE") {
+            cleanupAndStop()
+            return START_NOT_STICKY
         }
-        
+
+        val name = intent?.getStringExtra("PROVINCE_NAME")
+        val nameAr = intent?.getStringExtra("PROVINCE_NAME_AR") ?: name ?: ""
+        val west = intent?.getDoubleExtra("WEST", 0.0) ?: 0.0
+        val south = intent?.getDoubleExtra("SOUTH", 0.0) ?: 0.0
+        val east = intent?.getDoubleExtra("EAST", 0.0) ?: 0.0
+        val north = intent?.getDoubleExtra("NORTH", 0.0) ?: 0.0
+        val maxZoom = intent?.getIntExtra("MAX_ZOOM", 16) ?: 16
+
+        if (!name.isNullOrBlank()) {
+            val task = ProvinceDownloadTask(name, nameAr, west, south, east, north, maxZoom)
+            if (!downloadQueue.any { it.name == name } && currentTask?.name != name) {
+                downloadQueue.addLast(task)
+            }
+        }
+
+        startForegroundNotification("جاري تحضير تحميل الخرائط أوفلاين...", 0)
+        processNextTask()
+
         return START_STICKY
     }
 
-    private fun startSmartAutoDownload(lat: Double, lon: Double) {
-        // 1. تحميل النطاق الحالي (10 كم)
-        val offset = 0.1
-        downloadMap("MyArea", lon - offset, lat - offset, lon + offset, lat + offset, 14)
-        
-        // 2. تحميل سوريا كاملة (زوم منخفض)
-        downloadMap("SyriaLow", 35.0, 32.0, 42.5, 37.5, 10)
+    private fun processNextTask() {
+        if (isDownloading) return
+
+        if (downloadQueue.isEmpty()) {
+            showCompletionNotification("✅ تم اكتمال تحميل كافة الخرائط أوفلاين بنجاح")
+            cleanupAndStop()
+            return
+        }
+
+        val task = downloadQueue.removeFirst()
+        currentTask = task
+        isDownloading = true
+
+        lastUpdateTime = System.currentTimeMillis()
+        lastResourceSize = 0L
+
+        startMapDownload(task)
     }
 
-    private fun startForegroundNotification(title: String) {
-        val notification = createNotification(title, 0)
+    private fun startMapDownload(task: ProvinceDownloadTask) {
+        val prefs = getSharedPreferences("map_download_prefs", Context.MODE_PRIVATE)
+        prefs.edit {
+            putBoolean("downloading_${task.name}", true)
+            putFloat("progress_${task.name}", 0f)
+        }
+
+        val polygon = Polygon.fromLngLats(listOf(listOf(
+            Point.fromLngLat(task.west, task.south),
+            Point.fromLngLat(task.east, task.south),
+            Point.fromLngLat(task.east, task.north),
+            Point.fromLngLat(task.west, task.north),
+            Point.fromLngLat(task.west, task.south)
+        )))
+
+        val mapDescriptor = offlineManager.createTilesetDescriptor(
+            TilesetDescriptorOptions.Builder()
+                .styleURI("mapbox://styles/mapbox/satellite-streets-v12")
+                .minZoom(0)
+                .maxZoom(task.maxZoom.toByte())
+                .build()
+        )
+
+        tileStore.loadTileRegion(
+            task.name,
+            TileRegionLoadOptions.Builder()
+                .geometry(polygon)
+                .descriptors(listOf(mapDescriptor))
+                .acceptExpired(true)
+                .build(),
+            { progress ->
+                val currentTime = System.currentTimeMillis()
+                val timeDiff = (currentTime - lastUpdateTime) / 1000.0
+                val sizeDiff = progress.completedResourceSize - lastResourceSize
+
+                val speedStr = if (timeDiff > 0.8) {
+                    val speedKB = (sizeDiff / 1024.0) / timeDiff
+                    lastUpdateTime = currentTime
+                    lastResourceSize = progress.completedResourceSize
+                    if (speedKB > 1024) String.format(Locale.US, "%.1f MB/s", speedKB / 1024.0)
+                    else String.format(Locale.US, "%.1f KB/s", speedKB)
+                } else {
+                    prefs.getString("speed_${task.name}", "0 KB/s") ?: "0 KB/s"
+                }
+
+                val p = if (progress.requiredResourceCount > 0) {
+                    progress.completedResourceCount.toFloat() / progress.requiredResourceCount.toFloat()
+                } else 0f
+
+                val percentInt = (p * 100).toInt()
+                val sizeMB = String.format(Locale.US, "%.1f MB", progress.completedResourceSize / (1024.0 * 1024.0))
+
+                prefs.edit {
+                    putFloat("progress_${task.name}", p)
+                    putString("speed_${task.name}", speedStr)
+                    putString("size_${task.name}", sizeMB)
+                    putLong("completed_${task.name}", progress.completedResourceCount)
+                    putLong("total_${task.name}", progress.requiredResourceCount)
+                }
+
+                val notifContent = "تحميل: ${task.nameAr} • $percentInt% • $speedStr ($sizeMB)"
+                updateNotification(notifContent, percentInt)
+            },
+            { expected ->
+                isDownloading = false
+                if (expected.isValue) {
+                    prefs.edit {
+                        remove("downloading_${task.name}")
+                        putFloat("progress_${task.name}", 1f)
+                    }
+                } else {
+                    prefs.edit {
+                        remove("downloading_${task.name}")
+                    }
+                }
+                currentTask = null
+                processNextTask()
+            }
+        )
+    }
+
+    private fun startForegroundNotification(title: String, progress: Int) {
+        val notification = createNotification(title, progress)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
@@ -112,67 +225,62 @@ class MapDownloadService : Service() {
         }
     }
 
-    private fun downloadMap(name: String, w: Double, s: Double, e: Double, n: Double, maxZoom: Int) {
-        val polygon = Polygon.fromLngLats(listOf(listOf(
-            Point.fromLngLat(w, s), Point.fromLngLat(e, s),
-            Point.fromLngLat(e, n), Point.fromLngLat(w, n), Point.fromLngLat(w, s)
-        )))
-
-        val mapDescriptor = offlineManager.createTilesetDescriptor(
-            TilesetDescriptorOptions.Builder()
-                .styleURI("mapbox://styles/mapbox/satellite-streets-v12")
-                .minZoom(0)
-                .maxZoom(maxZoom.toByte())
-                .build()
-        )
-
-        tileStore.loadTileRegion(
-            name,
-            TileRegionLoadOptions.Builder()
-                .geometry(polygon)
-                .descriptors(listOf(mapDescriptor))
-                .acceptExpired(true)
-                .build(),
-            { progress ->
-                val p = (progress.completedResourceCount.toFloat() / progress.requiredResourceCount.toFloat() * 100).toInt()
-                updateNotification(name, p)
-            },
-            { expected ->
-                if (expected.isError && name != "MyArea") cleanupAndStop()
-                // if it's smart auto, we keep going for other regions
-            }
-        )
+    private fun updateNotification(contentText: String, progress: Int) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, createNotification(contentText, progress))
     }
 
-    private fun cleanupAndStop() {
-        if (wakeLock?.isHeld == true) wakeLock?.release()
-        if (wifiLock?.isHeld == true) wifiLock?.release()
-        stopForeground(STOP_FOREGROUND_DETACH)
-        stopSelf()
+    private fun showCompletionNotification(message: String) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("خريطة الميدان أوفلاين")
+            .setContentText(message)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+        manager.notify(NOTIFICATION_ID + 1, notif)
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "مزامنة الخرائط", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "تنزيل الخرائط أوفلاين بالخلفية",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "عرض تقدم ونسبة تحميل الخرائط والمحافظات أوفلاين بالخلفية"
+            }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
         }
     }
 
-    private fun createNotification(title: String, progress: Int): Notification {
+    private fun createNotification(contentText: String, progress: Int): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(title)
-            .setContentText("جاري تحديث الخرائط الميدانية... $progress%")
+            .setContentTitle("تنزيل الخرائط الميدانية أوفلاين 📡")
+            .setContentText(contentText)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setProgress(100, progress, false)
+            .setProgress(100, progress, progress == 0)
             .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }
 
-    private fun updateNotification(name: String, progress: Int) {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, createNotification("تحديث: $name", progress))
+    private fun cleanupAndStop() {
+        try {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+            if (wifiLock?.isHeld == true) wifiLock?.release()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_DETACH)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        stopSelf()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
