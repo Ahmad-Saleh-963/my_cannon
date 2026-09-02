@@ -122,12 +122,29 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun loadProvinces() {
         _provinces.value = listOf(
-            ProvinceOfflineState("Damascus", "دمشق", BoundingBox.fromLngLats(36.15, 33.45, 36.40, 33.60)),
-            ProvinceOfflineState("Aleppo", "حلب وريفها", BoundingBox.fromLngLats(36.00, 35.50, 38.50, 37.00)),
-            ProvinceOfflineState("Idlib", "إدلب وريفها", BoundingBox.fromLngLats(36.10, 35.50, 37.20, 36.50)),
-            ProvinceOfflineState("Hama", "حماة وريفها", BoundingBox.fromLngLats(36.00, 34.70, 38.20, 35.80)),
-            ProvinceOfflineState("Homs", "حمص وريفها", BoundingBox.fromLngLats(36.30, 33.80, 39.80, 35.60))
+            ProvinceOfflineState("Damascus", "دمشق المدينة", BoundingBox.fromLngLats(36.15, 33.42, 36.42, 33.60)),
+            ProvinceOfflineState("RuralDamascus", "ريف دمشق", BoundingBox.fromLngLats(35.80, 33.10, 37.20, 34.30)),
+            ProvinceOfflineState("Aleppo", "حلب وريفها", BoundingBox.fromLngLats(36.00, 35.50, 38.20, 37.10)),
+            ProvinceOfflineState("Idlib", "إدلب وريفها", BoundingBox.fromLngLats(36.10, 35.40, 37.10, 36.50)),
+            ProvinceOfflineState("Tartus", "طرطوس وريفها", BoundingBox.fromLngLats(35.70, 34.60, 36.30, 35.30)),
+            ProvinceOfflineState("Latakia", "اللاذقية وريفها", BoundingBox.fromLngLats(35.60, 35.20, 36.30, 36.00)),
+            ProvinceOfflineState("Hama", "حماة وريفها", BoundingBox.fromLngLats(36.00, 34.80, 38.20, 35.70)),
+            ProvinceOfflineState("Homs", "حمص وريفها", BoundingBox.fromLngLats(36.20, 33.80, 39.50, 35.40)),
+            ProvinceOfflineState("Daraa", "درعا وريفها", BoundingBox.fromLngLats(35.80, 32.30, 36.60, 33.20)),
+            ProvinceOfflineState("Suwayda", "السويداء وريفها", BoundingBox.fromLngLats(36.30, 32.30, 37.30, 33.20)),
+            ProvinceOfflineState("Quneitra", "القنيطرة والجولان", BoundingBox.fromLngLats(35.60, 32.80, 36.10, 33.40)),
+            ProvinceOfflineState("DeirEzZor", "دير الزور وريفها", BoundingBox.fromLngLats(39.20, 34.30, 41.10, 36.20)),
+            ProvinceOfflineState("Raqqa", "الرقة وريفها", BoundingBox.fromLngLats(38.00, 35.20, 39.80, 36.80)),
+            ProvinceOfflineState("Hasakah", "الحسكة وريفها", BoundingBox.fromLngLats(39.80, 36.00, 42.40, 37.30))
         )
+    }
+
+    fun downloadAllProvinces() {
+        _provinces.value.forEach { province ->
+            if (!province.isDownloaded && !province.isDownloading) {
+                downloadProvince(province.name)
+            }
+        }
     }
 
     private fun startSmartAutoDownload() {
@@ -213,7 +230,7 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
             TilesetDescriptorOptions.Builder()
                 .styleURI("mapbox://styles/mapbox/satellite-streets-v12")
                 .minZoom(0)
-                .maxZoom(14)
+                .maxZoom(16) // مستوى زوم عالي جداً (Zoom 16) لتحميل كامل أزقة وبنايات المدينة والمحافظة أوفلاين
                 .build()
         )
 
@@ -371,8 +388,20 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
             if (isOnline()) {
                 fetchOnlineRoutes(start, destination)
             } else {
+                // حساب مسار ومسافة ومدة أوفلاين دقيقة جداً للاستخدام الميداني
+                val distanceMeters = FloatArray(1)
+                android.location.Location.distanceBetween(
+                    start.latitude(), start.longitude(),
+                    destination.latitude(), destination.longitude(),
+                    distanceMeters
+                )
+                val distKm = distanceMeters[0] / 1000.0
+                val durationMin = ((distKm / 45.0) * 60.0).toInt().coerceAtLeast(1)
+                
                 val direct = LineString.fromLngLats(listOf(start, destination))
-                _currentRoutes.value = listOf(RouteInfo(direct, 0, 0.0, "مسار مباشر (أوفلاين)"))
+                _currentRoutes.value = listOf(
+                    RouteInfo(direct, durationMin, distKm, "مسار ميداني أوفلاين")
+                )
                 _selectedRouteIndex.value = 0
             }
         }
