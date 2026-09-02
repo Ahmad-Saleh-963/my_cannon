@@ -11,6 +11,10 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ahmadsaleh.map.R
+import com.ahmadsaleh.map.data.db.AppDatabase
+import com.ahmadsaleh.map.data.db.entity.CachedRouteEntity
+import com.ahmadsaleh.map.domain.calculator.OfflineRoadNetworkRouter
+import com.ahmadsaleh.map.domain.calculator.SmartRouteMatcher
 import com.google.android.gms.location.LocationServices
 import com.mapbox.common.TileStore
 import com.mapbox.common.TileRegionLoadOptions
@@ -383,27 +387,44 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
         return (syriaDbResults + poiResults).distinctBy { Pair(it.name, it.province) }
     }
 
+    private val cachedRouteDao by lazy {
+        AppDatabase.getInstance(getApplication()).cachedRouteDao()
+    }
+
     fun calculateDrivingRoute(start: Point, destination: Point) {
         viewModelScope.launch {
             if (isOnline()) {
                 fetchOnlineRoutes(start, destination)
             } else {
-                // حساب مسار ومسافة ومدة أوفلاين دقيقة جداً للاستخدام الميداني
-                val distanceMeters = FloatArray(1)
-                android.location.Location.distanceBetween(
-                    start.latitude(), start.longitude(),
-                    destination.latitude(), destination.longitude(),
-                    distanceMeters
-                )
-                val distKm = distanceMeters[0] / 1000.0
-                val durationMin = ((distKm / 45.0) * 60.0).toInt().coerceAtLeast(1)
-                
-                val direct = LineString.fromLngLats(listOf(start, destination))
-                _currentRoutes.value = listOf(
-                    RouteInfo(direct, durationMin, distKm, "مسار ميداني أوفلاين")
-                )
-                _selectedRouteIndex.value = 0
+                fetchOfflineSmartRoutes(start, destination)
             }
+        }
+    }
+
+    private suspend fun fetchOfflineSmartRoutes(start: Point, destination: Point) = withContext(Dispatchers.IO) {
+        try {
+            val allCached = cachedRouteDao.getAllCachedRoutes()
+            val matchedRoutes = SmartRouteMatcher.findMatchingRoutes(start, destination, allCached)
+
+            if (matchedRoutes.isNotEmpty()) {
+                _currentRoutes.value = matchedRoutes
+                _selectedRouteIndex.value = 0
+                return@withContext
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // في حال عدم توفر اتصال بالإنترنت أو عدم توفر بيانات مسار مسبقة، لا يتم رسم أي خط تجريدي نهائياً
+        _currentRoutes.value = emptyList()
+        _selectedRouteIndex.value = 0
+
+        withContext(Dispatchers.Main) {
+            android.widget.Toast.makeText(
+                getApplication(),
+                "لا يتوفر اتصال بالإنترنت أو بيانات مسبقة عن هذا المسار لعرضه أوفلاين",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
         }
     }
 
@@ -448,12 +469,30 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
                 
                 routesList.add(RouteInfo(geometry, duration, distance, summary))
             }
+
             _currentRoutes.value = routesList
             _selectedRouteIndex.value = 0
+
+            // حفظ وتحديث جميع المسارات المحسوبة أونلاين تلقائياً في قاعدة البيانات المحلية
+            for (r in routesList) {
+                try {
+                    cachedRouteDao.deleteExactPair(start.latitude(), start.longitude(), destination.latitude(), destination.longitude())
+                    cachedRouteDao.insertRoute(
+                        CachedRouteEntity(
+                            startLat = start.latitude(),
+                            startLon = start.longitude(),
+                            destLat = destination.latitude(),
+                            destLon = destination.longitude(),
+                            geoJsonGeometry = r.geometry.toJson(),
+                            durationMinutes = r.durationMinutes,
+                            distanceKm = r.distanceKm,
+                            summary = r.summary
+                        )
+                    )
+                } catch (_: Exception) {}
+            }
         } catch (_: Exception) {
-            val direct = LineString.fromLngLats(listOf(start, destination))
-            _currentRoutes.value = listOf(RouteInfo(direct, 0, 0.0, "خطأ في جلب المسارات"))
-            _selectedRouteIndex.value = 0
+            fetchOfflineSmartRoutes(start, destination)
         }
     }
 

@@ -247,6 +247,7 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                         selectedRouteIndex = selectedRouteIndex,
                         onSelectRoute = { offlineViewModel.selectRoute(it) },
                         destinationPoint = destinationPoint,
+                        destinationLabel = searchQuery.ifBlank { "الوجهة المطلوبة" },
                         modifier = Modifier.fillMaxSize()
                     )
 

@@ -109,6 +109,7 @@ fun MapViewContainer(
     selectedRouteIndex: Int = 0,
     onSelectRoute: (Int) -> Unit = {},
     destinationPoint: Point? = null,
+    destinationLabel: String = "",
     @SuppressLint("ModifierParameter") modifier: Modifier = Modifier
 ) {
     val routeGeometry = if (allRoutes.isNotEmpty()) allRoutes[selectedRouteIndex.coerceIn(0, allRoutes.lastIndex)].geometry else null
@@ -116,7 +117,9 @@ fun MapViewContainer(
     // تعريف الأشكال والرموز للعلامات الجديدة
     // سيتم توليد أهداف وعلامات بشكل ديناميكي داخل الحلقة لضمان تحديث الأسماء
     
-    val targetBitmapFallback = rememberIconBitmap(Icons.Default.TrackChanges, Color.Red)
+    val destinationBitmap = rememberDestinationPinBitmap(
+        label = destinationLabel.ifBlank { "الوجهة المطلوبة" }
+    )
 
     val carTopBitmap = rememberIconBitmap(Icons.Default.KeyboardArrowUp, Color.White)
     val carBodyBitmap = rememberIconBitmap(Icons.Default.Navigation, Color(0xFF007AFF))
@@ -538,9 +541,9 @@ fun MapViewContainer(
 
             destinationPoint?.let {
                 PointAnnotation(point = it) {
-                    iconImage = IconImage(targetBitmapFallback)
-                    iconAnchor = IconAnchor.CENTER
-                    iconSize = 1.5
+                    iconImage = IconImage(destinationBitmap)
+                    iconAnchor = IconAnchor.BOTTOM
+                    iconSize = 1.0
                 }
             }
         }
@@ -888,6 +891,150 @@ fun RealtimeSpeedometerWidget(
                 }
             }
         }
+    }
+}
+
+/**
+ * أيقونة وشارة الهدف الملاحي (Destination Target Pin) المصممة بدقة وجمالية متناهية ثلاثية الأبعاد
+ */
+@Composable
+fun rememberDestinationPinBitmap(
+    label: String = "الوجهة المطلوبة",
+    color: Color = Color(0xFFFF2D55) // أحمر ياقوتي زاهٍ ومتألق
+): Bitmap {
+    val density = LocalDensity.current
+    val iconPainter = rememberVectorPainter(Icons.Default.LocationOn)
+
+    return remember(label, color) {
+        val sizePx = with(density) { 54.dp.toPx() }
+        val padding = with(density) { 4.dp.toPx() }
+        val fontSize = with(density) { 10.5.sp.toPx() }
+
+        val textPaint = android.graphics.Paint().apply {
+            isAntiAlias = true
+            textSize = fontSize
+            this.color = android.graphics.Color.WHITE
+            textAlign = android.graphics.Paint.Align.CENTER
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setShadowLayer(8f, 0f, 2f, android.graphics.Color.BLACK)
+        }
+
+        val textBounds = android.graphics.Rect()
+        textPaint.getTextBounds(label, 0, label.length, textBounds)
+
+        val pinWidth = sizePx * 0.72f
+        val pinHeight = sizePx * 0.90f
+        val labelHeight = textBounds.height() + padding * 3f
+
+        val width = maxOf(pinWidth + padding * 6f, textBounds.width().toFloat() + padding * 8f)
+        val height = pinHeight + labelHeight + padding * 2f
+
+        val bitmap = createBitmap(width.toInt().coerceAtLeast(1), height.toInt().coerceAtLeast(1))
+        val canvas = android.graphics.Canvas(bitmap)
+        val composeCanvas = Canvas(bitmap.asImageBitmap())
+
+        val centerX = width / 2f
+
+        // 1. رسم الظل الخارجي المضيء تحت الدبوس
+        val shadowPaint = android.graphics.Paint().apply {
+            isAntiAlias = true
+            this.color = android.graphics.Color.argb(120, 0, 0, 0)
+            style = android.graphics.Paint.Style.FILL
+            maskFilter = android.graphics.BlurMaskFilter(12f, android.graphics.BlurMaskFilter.Blur.NORMAL)
+        }
+        canvas.drawCircle(centerX, pinHeight - 4f, pinWidth * 0.28f, shadowPaint)
+
+        // 2. رسم الدبوس الملاحي الرئيسي (Drop Pin Path)
+        val pinPath = android.graphics.Path().apply {
+            moveTo(centerX, pinHeight)
+            cubicTo(
+                centerX - pinWidth * 0.45f, pinHeight * 0.60f,
+                centerX - pinWidth * 0.50f, 0f,
+                centerX, 0f
+            )
+            cubicTo(
+                centerX + pinWidth * 0.50f, 0f,
+                centerX + pinWidth * 0.45f, pinHeight * 0.60f,
+                centerX, pinHeight
+            )
+            close()
+        }
+
+        val pinPaint = android.graphics.Paint().apply {
+            isAntiAlias = true
+            this.color = color.toArgb()
+            style = android.graphics.Paint.Style.FILL
+        }
+
+        val borderPaint = android.graphics.Paint().apply {
+            isAntiAlias = true
+            this.color = android.graphics.Color.WHITE
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 4f
+        }
+
+        canvas.drawPath(pinPath, pinPaint)
+        canvas.drawPath(pinPath, borderPaint)
+
+        // 3. رسم الحلقة البيضاء المركزية والأيقونة
+        val innerCircleRadius = pinWidth * 0.28f
+        val innerCircleY = pinHeight * 0.38f
+
+        val whiteCirclePaint = android.graphics.Paint().apply {
+            isAntiAlias = true
+            this.color = android.graphics.Color.WHITE
+            style = android.graphics.Paint.Style.FILL
+        }
+        canvas.drawCircle(centerX, innerCircleY, innerCircleRadius, whiteCirclePaint)
+
+        // رسم أيقونة الملاحة الداخلية
+        val iconSize = innerCircleRadius * 1.5f
+        val drawScope = CanvasDrawScope()
+        drawScope.draw(
+            density = density,
+            layoutDirection = LayoutDirection.Ltr,
+            canvas = composeCanvas,
+            size = Size(width, height)
+        ) {
+            translate(left = centerX - iconSize / 2f, top = innerCircleY - iconSize / 2f) {
+                with(iconPainter) {
+                    draw(size = Size(iconSize, iconSize), colorFilter = ColorFilter.tint(color))
+                }
+            }
+        }
+
+        // 4. رسم ملصق الكبسولة الملاحي تحت الدبوس باسم المنطقة
+        val labelBgPaint = android.graphics.Paint().apply {
+            isAntiAlias = true
+            this.color = android.graphics.Color.argb(230, 15, 23, 42) // كحلي زجاجي راقٍ
+            style = android.graphics.Paint.Style.FILL
+        }
+
+        val labelBorderPaint = android.graphics.Paint().apply {
+            isAntiAlias = true
+            this.color = color.toArgb()
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 3f
+        }
+
+        val labelRect = android.graphics.RectF(
+            centerX - (textBounds.width() / 2f) - padding * 3f,
+            pinHeight + padding,
+            centerX + (textBounds.width() / 2f) + padding * 3f,
+            pinHeight + labelHeight
+        )
+        val cornerRadius = 12f
+        canvas.drawRoundRect(labelRect, cornerRadius, cornerRadius, labelBgPaint)
+        canvas.drawRoundRect(labelRect, cornerRadius, cornerRadius, labelBorderPaint)
+
+        canvas.drawText(
+            label,
+            centerX,
+            labelRect.centerY() - ((textPaint.descent() + textPaint.ascent()) / 2f),
+            textPaint
+        )
+
+        bitmap
     }
 }
 
