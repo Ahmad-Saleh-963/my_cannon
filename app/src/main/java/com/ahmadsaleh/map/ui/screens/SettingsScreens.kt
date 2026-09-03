@@ -5,9 +5,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.*
@@ -17,6 +18,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -63,6 +66,7 @@ fun SettingsScreens(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -129,7 +133,7 @@ fun SettingsScreens(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                imageVector = if (isAlarmActive) Icons.Default.Speed else Icons.Default.VolumeOff,
+                                imageVector = if (isAlarmActive) Icons.Default.Speed else Icons.AutoMirrored.Filled.VolumeOff,
                                 contentDescription = null,
                                 tint = if (isAlarmActive) Color(0xFFFF3B30) else Color.Gray,
                                 modifier = Modifier.size(22.dp)
@@ -199,6 +203,63 @@ fun SettingsScreens(
                             )
                         )
                     }
+                }
+            }
+
+            // بطاقة تنبيه الخروج عن المسار والعودة الذكية
+            var isOffRouteActive by remember(viewModel.isOffRouteAlertEnabled) { mutableStateOf(viewModel.isOffRouteAlertEnabled) }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                border = BorderStroke(1.dp, if (isOffRouteActive) Color(0xFFFF9500).copy(alpha = 0.5f) else Color.Gray.copy(alpha = 0.3f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.WrongLocation,
+                                contentDescription = null,
+                                tint = if (isOffRouteActive) Color(0xFFFF9500) else Color.Gray,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = "تنبيه الخروج عن المسار والرجوع الذكي",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (isOffRouteActive) MaterialTheme.colorScheme.onSurface else Color.Gray
+                            )
+                        }
+
+                        Switch(
+                            checked = isOffRouteActive,
+                            onCheckedChange = { checked ->
+                                isOffRouteActive = checked
+                                viewModel.toggleOffRouteAlert(checked)
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = Color(0xFFFF9500),
+                                uncheckedThumbColor = Color.LightGray,
+                                uncheckedTrackColor = Color.DarkGray
+                            )
+                        )
+                    }
+
+                    Text(
+                        text = if (isOffRouteActive) "عند الانحراف أو الخروج خارج المسار أثناء الملاحة، سيهتز الهاتف مع تنبيهك فورياً ورسم مسار رجوع تصحيحي بلون برتقالي متميز للعودة للمسار." else "تنبيه الخروج عن المسار وإعادة الحساب معطل حالياً.",
+                        fontSize = 11.sp,
+                        color = Color.Gray
+                    )
                 }
             }
 

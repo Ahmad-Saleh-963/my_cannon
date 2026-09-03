@@ -12,7 +12,6 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.util.Rational
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -70,7 +69,6 @@ import com.ahmadsaleh.map.ui.screens.CannonSimulationScreen
 import com.ahmadsaleh.map.ui.theme.My_cannonTheme
 import com.ahmadsaleh.map.ui.viewmodel.CannonViewModel
 import com.ahmadsaleh.map.data.model.*
-import com.ahmadsaleh.map.domain.calculator.UtmConverter
 import com.ahmadsaleh.map.ui.screens.OfflineMapsScreen
 import com.google.android.gms.common.api.ResolvableApiException
 import com.google.android.gms.location.*
@@ -107,7 +105,7 @@ class MainActivity : ComponentActivity() {
         if (!packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return false
 
         return try {
-            val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+            val appOps = getSystemService(APP_OPS_SERVICE) as AppOpsManager
             val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_PICTURE_IN_PICTURE, android.os.Process.myUid(), packageName)
             } else {
@@ -353,7 +351,7 @@ fun MainScreen(
     // إخفاء تلقائي لشريط البحث بعد 3 ثواني إذا ظهر وبقي فارغاً بدون كتابة
     LaunchedEffect(isSearchBarVisible, searchQuery) {
         if (isSearchBarVisible && searchQuery.isEmpty()) {
-            kotlinx.coroutines.delay(3.seconds)
+            delay(3.seconds)
             isSearchBarVisible = false
         }
     }
@@ -395,6 +393,9 @@ fun MainScreen(
                         onClearRoute = {
                             offlineViewModel.clearRoute()
                             destinationPoint = null
+                        },
+                        onReroute = { start, dest ->
+                            offlineViewModel.calculateDrivingRoute(start, dest)
                         },
                         modifier = Modifier.fillMaxSize()
                     )
@@ -600,7 +601,7 @@ fun MainScreen(
                     )
                 }
                 9 -> {
-                    com.ahmadsaleh.map.ui.screens.DrivingRecordsScreen(
+                    DrivingRecordsScreen(
                         onBack = { selectedTab = 4 }
                     )
                 }
@@ -799,7 +800,7 @@ fun MainScreen(
  * وظيفة لجلب الموقع الحالي وحفظه وتحريك الكاميرا إليه فوراً
  */
 private fun fetchAndSaveLocation(
-    context: android.content.Context, 
+    context: Context,
     viewModel: CannonViewModel, 
     mapViewportState: com.mapbox.maps.extension.compose.animation.viewport.MapViewportState
 ) {
