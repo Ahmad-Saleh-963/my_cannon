@@ -28,6 +28,13 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import android.os.Build
+import android.widget.Toast
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Info
@@ -117,6 +124,7 @@ fun MapViewContainer(
     isInPipMode: Boolean = false,
     onEnableGps: () -> Unit = {},
     onClearRoute: () -> Unit = {},
+    onReroute: (Point, Point) -> Unit = { _, _ -> },
     @SuppressLint("ModifierParameter") modifier: Modifier = Modifier
 ) {
     val routeGeometry = if (allRoutes.isNotEmpty()) allRoutes[selectedRouteIndex.coerceIn(0, allRoutes.lastIndex)].geometry else null
@@ -255,6 +263,137 @@ fun MapViewContainer(
                 mapViewportState.transitionToFollowPuckState()
             }
         }
+    }
+
+    var lastOffRouteAlertTime by remember { mutableLongStateOf(0L) }
+    var isOffRouteActiveState by remember { mutableStateOf(false) }
+
+    // فحص وتنبيه الانحراف والخروج عن المسار أثناء القيادة مع إعادة الحساب والاهتزاز
+    LaunchedEffect(isNavLocked, viewModel.getLastLocation(), routeGeometry) {
+        if (isNavLocked && viewModel.isOffRouteAlertEnabled && routeGeometry != null) {
+            val currentLoc = viewModel.getLastLocation()
+            if (currentLoc != null) {
+                val driverPoint = Point.fromLngLat(currentLoc.second, currentLoc.first)
+                val points = routeGeometry.coordinates()
+
+                if (points.isNotEmpty()) {
+                    var minDistanceMeters = Double.MAX_VALUE
+                    for (p in points) {
+                        val distArray = FloatArray(1)
+                        Location.distanceBetween(
+                            driverPoint.latitude(), driverPoint.longitude(),
+                            p.latitude(), p.longitude(),
+                            distArray
+                        )
+                        val d = distArray[0].toDouble()
+                        if (d < minDistanceMeters) {
+                            minDistanceMeters = d
+                        }
+                    }
+
+                    // إذا خرجت السيارة عن المسار بأكثر من 45 متراً
+                    if (minDistanceMeters > 45.0) {
+                        val now = System.currentTimeMillis()
+                        if (now - lastOffRouteAlertTime > 12000L) {
+                            lastOffRouteAlertTime = now
+                            isOffRouteActiveState = true
+
+                            // 1. اهتزاز تنبيهي
+                            try {
+                                val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                    val vm = context.getSystemService(android.content.Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+                                    vm?.defaultVibrator
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+                                }
+                                if (vibrator?.hasVibrator() == true) {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        vibrator.vibrate(android.os.VibrationEffect.createOneShot(400L, 255))
+                                    } else {
+                                        @Suppress("DEPRECATION")
+                                        vibrator.vibrate(400L)
+                                    }
+                                }
+                            } catch (_: Exception) {}
+
+                            // 2. إشعار تحذيري
+                            Toast.makeText(context, "⚠️ انحراف عن المسار! جارٍ إعادة الحساب والرجوع للمسار الرئيسي...", Toast.LENGTH_SHORT).show()
+
+                            // 3. إعادة حساب المسار تلقائياً من الموقع الجديد
+                            destinationPoint?.let { dest ->
+                                onReroute(driverPoint, dest)
+                            }
+                        }
+                    } else {
+                        isOffRouteActiveState = false
+                    }
+                }
+            }
+        } else {
+            isOffRouteActiveState = false
+        }
+    }
+
+    // حركة التردد والوميض للانعطاف القريب القادم
+    val infiniteTransition = rememberInfiniteTransition(label = "TurnPulse")
+    val turnPulseOpacity by infiniteTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 600, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "PulseAlpha"
+    )
+
+    // حساب قطاع الانعطاف القريب القادم على المسار (ضمن مسافة 15 إلى 150 متراً قبل الانعطاف)
+    val upcomingTurnSegment = remember(routeGeometry, viewModel.getLastLocation(), isNavLocked) {
+        if (isNavLocked && routeGeometry != null) {
+            val currentLoc = viewModel.getLastLocation()
+            val points = routeGeometry.coordinates()
+            if (currentLoc != null && points.size >= 3) {
+                val driverPoint = Point.fromLngLat(currentLoc.second, currentLoc.first)
+
+                var closestIdx = 0
+                var minDist = Double.MAX_VALUE
+                for (i in points.indices) {
+                    val distArray = FloatArray(1)
+                    Location.distanceBetween(driverPoint.latitude(), driverPoint.longitude(), points[i].latitude(), points[i].longitude(), distArray)
+                    if (distArray[0] < minDist) {
+                        minDist = distArray[0].toDouble()
+                        closestIdx = i
+                    }
+                }
+
+                var turnIdx = -1
+                for (k in (closestIdx + 1) until (points.size - 1)) {
+                    val pPrev = points[k - 1]
+                    val pCurr = points[k]
+                    val pNext = points[k + 1]
+
+                    val b1 = calculateBearing(pPrev, pCurr)
+                    val b2 = calculateBearing(pCurr, pNext)
+                    val angleDiff = kotlin.math.abs(b2 - b1)
+                    val normalizedAngle = if (angleDiff > 180.0) 360.0 - angleDiff else angleDiff
+
+                    if (normalizedAngle > 35.0) {
+                        val distToTurn = FloatArray(1)
+                        Location.distanceBetween(driverPoint.latitude(), driverPoint.longitude(), pCurr.latitude(), pCurr.longitude(), distToTurn)
+                        if (distToTurn[0] in 15.0f..150.0f) {
+                            turnIdx = k
+                            break
+                        }
+                    }
+                }
+
+                if (turnIdx != -1) {
+                    val startTurn = (turnIdx - 1).coerceAtLeast(0)
+                    val endTurn = (turnIdx + 1).coerceAtMost(points.lastIndex)
+                    points.subList(startTurn, endTurn + 1)
+                } else null
+            } else null
+        } else null
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -585,6 +724,18 @@ fun MapViewContainer(
                         lineColor = Color(0xFF0284C7)
                         lineWidth = 10.0
                         lineOpacity = 1.0
+                        lineJoin = LineJoin.ROUND
+                    }
+                }
+            }
+
+            // 3. ثالثاً: رسم وميض تنبيه الانعطاف القريب المضيء (Pulsing Turn Warning Cue) قبل 15م - 150م من الانعطاف
+            upcomingTurnSegment?.let { turnPoints ->
+                if (turnPoints.size > 1) {
+                    PolylineAnnotation(points = turnPoints) {
+                        lineColor = Color(0xFF00E5FF) // أزرق سياني متألق ومضيء
+                        lineWidth = 14.0
+                        lineOpacity = turnPulseOpacity.toDouble()
                         lineJoin = LineJoin.ROUND
                     }
                 }
@@ -1767,4 +1918,15 @@ fun rememberIconBitmap(imageVector: ImageVector, color: Color): Bitmap {
         }
         imageBitmap.asAndroidBitmap()
     }
+}
+
+fun calculateBearing(p1: Point, p2: Point): Double {
+    val lat1 = Math.toRadians(p1.latitude())
+    val lon1 = Math.toRadians(p1.longitude())
+    val lat2 = Math.toRadians(p2.latitude())
+    val lon2 = Math.toRadians(p2.longitude())
+    val dLon = lon2 - lon1
+    val y = kotlin.math.sin(dLon) * kotlin.math.cos(lat2)
+    val x = kotlin.math.cos(lat1) * kotlin.math.sin(lat2) - kotlin.math.sin(lat1) * kotlin.math.cos(lat2) * kotlin.math.cos(dLon)
+    return (Math.toDegrees(kotlin.math.atan2(y, x)) + 360.0) % 360.0
 }

@@ -79,6 +79,14 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
         sharedPrefs.edit().putBoolean("is_speed_alarm_enabled", enabled).apply()
     }
 
+    var isOffRouteAlertEnabled by mutableStateOf(sharedPrefs.getBoolean("is_off_route_alert_enabled", true))
+        private set
+
+    fun toggleOffRouteAlert(enabled: Boolean) {
+        isOffRouteAlertEnabled = enabled
+        sharedPrefs.edit().putBoolean("is_off_route_alert_enabled", enabled).apply()
+    }
+
     var mainResult by mutableStateOf<CalculationResult?>(null)
         private set
 
