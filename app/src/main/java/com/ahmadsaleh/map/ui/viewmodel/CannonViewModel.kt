@@ -179,20 +179,6 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
         // حفظ آخر موقع في الملاحظات والكاش
         saveLastLocation(location.latitude, location.longitude)
 
-        if (cannonPos == null) {
-            val geo = GeoPoint(location.latitude, location.longitude)
-            val utm = UtmConverter.fromGeoToUtm(geo)
-            updatePointFull(
-                point = null,
-                type = PointType.CANNON,
-                name = "المربط",
-                description = "",
-                elevation = 0.0,
-                geo = geo,
-                utm = utm
-            )
-        }
-
         if (rawSpeedMs < 0f) return
 
         var rawSpeedKmh = rawSpeedMs * 3.6f

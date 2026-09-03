@@ -799,22 +799,7 @@ private fun fetchAndSaveLocation(
                     // 1. حفظ الموقع في الكاش
                     viewModel.saveLastLocation(it.latitude, it.longitude)
                     
-                    // 2. تحديث المربط تلقائياً إذا كان فارغاً
-                    if (viewModel.cannonPos == null) {
-                        val geo = GeoPoint(it.latitude, it.longitude)
-                        val utm = UtmConverter.fromGeoToUtm(geo)
-                        viewModel.updatePointFull(
-                            point = null,
-                            type = PointType.CANNON,
-                            name = "المربط",
-                            description = "",
-                            elevation = 0.0,
-                            geo = geo,
-                            utm = utm
-                        )
-                    }
-                    
-                    // 3. تحريك الكاميرا الفوري الخاطف والسريع جداً للموقع
+                    // 2. تحريك الكاميرا الفوري الخاطف والسريع جداً للموقع
                     mapViewportState.setCameraOptions {
                         center(Point.fromLngLat(it.longitude, it.latitude))
                         zoom(15.5)

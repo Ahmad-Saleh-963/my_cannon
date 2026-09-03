@@ -4,5 +4,6 @@ enum class PointType {
     NONE,
     CANNON,
     TARGET,
-    REFERENCE
+    REFERENCE,
+    LOCATION
 }
