@@ -1,7 +1,6 @@
 package com.ahmadsaleh.map.ui.screens
 
 import android.Manifest
-import android.app.Activity
 import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
@@ -10,9 +9,11 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -43,7 +44,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.ahmadsaleh.map.MainActivity
 import com.ahmadsaleh.map.ui.viewmodel.CannonViewModel
 import com.ahmadsaleh.map.data.model.PointType
 import kotlin.math.roundToInt
@@ -640,35 +640,40 @@ fun PermissionsManagerDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    val activity = remember(context) {
-        var c = context
-        while (c is android.content.ContextWrapper) {
-            if (c is Activity) return@remember c
-            c = c.baseContext
-        }
-        null
-    }
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     var isLocationGranted by remember { mutableStateOf(checkLocationGranted(context)) }
     var isNotificationGranted by remember { mutableStateOf(checkNotificationsGranted(context)) }
     var isPipGrantedState by remember { mutableStateOf(checkPipGranted(context)) }
     var isVibrationGranted by remember { mutableStateOf(checkVibrationGranted(context)) }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) {
+    fun refreshPermissions() {
         isLocationGranted = checkLocationGranted(context)
         isNotificationGranted = checkNotificationsGranted(context)
-        isVibrationGranted = checkVibrationGranted(context)
         isPipGrantedState = checkPipGranted(context)
+        isVibrationGranted = checkVibrationGranted(context)
     }
 
-    DisposableEffect(Unit) {
-        isLocationGranted = checkLocationGranted(context)
-        isNotificationGranted = checkNotificationsGranted(context)
-        isPipGrantedState = checkPipGranted(context)
-        isVibrationGranted = checkVibrationGranted(context)
-        onDispose {}
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        refreshPermissions()
+        val anyGranted = results.values.any { it }
+        if (!anyGranted && results.isNotEmpty()) {
+            openAppSettings(context)
+        }
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshPermissions()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     Dialog(
@@ -720,7 +725,7 @@ fun PermissionsManagerDialog(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                // 1. صلاحية الموقع الجغرافي (طلب مباشر داخل التطبيق أولاً)
+                // 1. صلاحية الموقع الجغرافي (طلب مباشر حقيقي بنقرة واحدة)
                 PermissionCardItem(
                     title = "الموقع الجغرافي العالي الدقة (GPS)",
                     description = "ضروري لتحديد موقعك المباشر ورسم مسار الملاحة وحساب السرعة بدقة.",
@@ -729,17 +734,12 @@ fun PermissionsManagerDialog(
                     color = Color.Cyan,
                     onGrantClick = {
                         if (!isLocationGranted) {
-                            val fineDenied = activity?.let { ActivityCompat.shouldShowRequestPermissionRationale(it, Manifest.permission.ACCESS_FINE_LOCATION) } ?: false
-                            if (fineDenied) {
-                                openAppSettings(context)
-                            } else {
-                                permissionLauncher.launch(
-                                    arrayOf(
-                                        Manifest.permission.ACCESS_FINE_LOCATION,
-                                        Manifest.permission.ACCESS_COARSE_LOCATION
-                                    )
+                            permissionLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION
                                 )
-                            }
+                            )
                         }
                     }
                 )
@@ -758,7 +758,7 @@ fun PermissionsManagerDialog(
                     }
                 )
 
-                // 3. إشعارات الخدمة والتحميل (طلب مباشر داخل التطبيق أولاً)
+                // 3. إشعارات الخدمة والتحميل (طلب مباشر حقيقي بنقرة واحدة)
                 PermissionCardItem(
                     title = "إشعارات الخدمة والتحميل",
                     description = "ضرورية لإظهار نسبة وسرعة تحميل الخرائط أوفلاين في شريط الإشعارات.",
@@ -768,12 +768,7 @@ fun PermissionsManagerDialog(
                     onGrantClick = {
                         if (!isNotificationGranted) {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                val notifDenied = activity?.let { ActivityCompat.shouldShowRequestPermissionRationale(it, Manifest.permission.POST_NOTIFICATIONS) } ?: false
-                                if (notifDenied) {
-                                    openAppSettings(context)
-                                } else {
-                                    permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
-                                }
+                                permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
                             } else {
                                 openAppSettings(context)
                             }
@@ -781,7 +776,7 @@ fun PermissionsManagerDialog(
                     }
                 )
 
-                // 4. صلاحية اهتزاز التنبيهات (طلب مباشر داخل التطبيق)
+                // 4. صلاحية اهتزاز التنبيهات (طلب مباشر)
                 PermissionCardItem(
                     title = "اهتزاز التنبيهات والسرعة",
                     description = "تتيح اهتزاز الهاتف عند تجاوز حد السرعة المسموح أو الانحراف عن المسار.",
