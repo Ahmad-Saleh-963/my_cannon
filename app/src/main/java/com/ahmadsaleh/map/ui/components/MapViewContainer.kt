@@ -271,21 +271,9 @@ fun MapViewContainer(
                     )
                 }
             },
-            scaleBar = {
-                if (!isInPipMode) {
-                    ScaleBar()
-                }
-            },
-            logo = {
-                if (!isInPipMode) {
-                    Logo()
-                }
-            },
-            attribution = {
-                if (!isInPipMode) {
-                    Attribution()
-                }
-            },
+            scaleBar = {},
+            logo = {},
+            attribution = {},
             onMapClickListener = { point ->
                 viewModel.updatePointFromMap(point.latitude(), point.longitude())
                 true

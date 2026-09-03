@@ -142,7 +142,7 @@ class MainActivity : ComponentActivity() {
     fun updatePipParams(enabled: Boolean) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
             try {
-                val aspectRatio = Rational(8, 12)
+                val aspectRatio = Rational(4, 5)
                 val paramsBuilder = PictureInPictureParams.Builder()
                     .setAspectRatio(aspectRatio)
 
@@ -180,7 +180,7 @@ class MainActivity : ComponentActivity() {
             }
 
             try {
-                val aspectRatio = Rational(3, 4)
+                val aspectRatio = Rational(4, 5)
                 val paramsBuilder = PictureInPictureParams.Builder()
                     .setAspectRatio(aspectRatio)
 
