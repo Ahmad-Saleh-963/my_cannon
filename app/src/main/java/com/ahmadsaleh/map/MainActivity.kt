@@ -142,7 +142,7 @@ class MainActivity : ComponentActivity() {
     fun updatePipParams(enabled: Boolean) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
             try {
-                val aspectRatio = Rational(3, 4)
+                val aspectRatio = Rational(8, 12)
                 val paramsBuilder = PictureInPictureParams.Builder()
                     .setAspectRatio(aspectRatio)
 
@@ -399,22 +399,24 @@ fun MainScreen(
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    // منطقة حساسة للسحب من الأعلى للأسفل لإظهار البحث
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(60.dp)
-                            .align(Alignment.TopCenter)
-                            .pointerInput(Unit) {
-                                detectVerticalDragGestures { _, dragAmount ->
-                                    if (dragAmount > 10) isSearchBarVisible = true
+                    if (!isInPipMode) {
+                        // منطقة حساسة للسحب من الأعلى للأسفل لإظهار البحث
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(60.dp)
+                                .align(Alignment.TopCenter)
+                                .pointerInput(Unit) {
+                                    detectVerticalDragGestures { _, dragAmount ->
+                                        if (dragAmount > 10) isSearchBarVisible = true
+                                    }
                                 }
-                            }
-                    )
+                        )
+                    }
 
                     // شريط البحث العلوي المدمج والتفاعلي
                     AnimatedVisibility(
-                        visible = isSearchBarVisible,
+                        visible = !isInPipMode && isSearchBarVisible,
                         enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
                         exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
                         modifier = Modifier.align(Alignment.TopCenter)
@@ -600,24 +602,26 @@ fun MainScreen(
                 }
             }
 
-            // منطقة حساسة للسحب في الأسفل فقط
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(60.dp) // ارتفاع كافٍ لاستشعار السحب من الأسفل
-                    .align(Alignment.BottomCenter)
-                    .pointerInput(Unit) {
-                        detectVerticalDragGestures { _, dragAmount ->
-                            if (dragAmount < -10) { // سحب للأعلى حصراً
-                                isBottomBarVisible = true
+            if (!isInPipMode) {
+                // منطقة حساسة للسحب في الأسفل فقط
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(60.dp) // ارتفاع كافٍ لاستشعار السحب من الأسفل
+                        .align(Alignment.BottomCenter)
+                        .pointerInput(Unit) {
+                            detectVerticalDragGestures { _, dragAmount ->
+                                if (dragAmount < -10) { // سحب للأعلى حصراً
+                                    isBottomBarVisible = true
+                                }
                             }
                         }
-                    }
-            )
+                )
+            }
 
             // شريط التنقل العائم والمتحرك
             AnimatedVisibility(
-                visible = isBottomBarVisible && selectedTab != 3,
+                visible = !isInPipMode && isBottomBarVisible && selectedTab != 3,
                 enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                 exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -676,7 +680,7 @@ fun MainScreen(
                     .fillMaxSize()
                     .safeDrawingPadding() // هذا السحر يمنع التداخل مع الساعة وأزرار النظام
             ) {
-                if (selectedTab == 0) {
+                if (!isInPipMode && selectedTab == 0) {
                     // 1. زر GPS الموحد الأنيق في أسفل اليسار
                     Surface(
                         onClick = {

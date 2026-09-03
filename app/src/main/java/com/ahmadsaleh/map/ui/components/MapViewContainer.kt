@@ -263,11 +263,28 @@ fun MapViewContainer(
             mapViewportState = mapViewportState,
             style = { MapStyle(style = "mapbox://styles/mapbox/satellite-streets-v12") },
             compass = {
-                Compass(
-                    alignment = Alignment.TopStart,
-                    contentPadding = PaddingValues(top = 48.dp, start = 16.dp),
-                    fadeWhenFacingNorth = false
-                )
+                if (!isInPipMode) {
+                    Compass(
+                        alignment = Alignment.TopStart,
+                        contentPadding = PaddingValues(top = 48.dp, start = 16.dp),
+                        fadeWhenFacingNorth = false
+                    )
+                }
+            },
+            scaleBar = {
+                if (!isInPipMode) {
+                    ScaleBar()
+                }
+            },
+            logo = {
+                if (!isInPipMode) {
+                    Logo()
+                }
+            },
+            attribution = {
+                if (!isInPipMode) {
+                    Attribution()
+                }
             },
             onMapClickListener = { point ->
                 viewModel.updatePointFromMap(point.latitude(), point.longitude())
@@ -580,24 +597,22 @@ fun MapViewContainer(
         }
         if (!isInPipMode) {
             CardinalDirectionsOverlay()
-        }
 
-        if (viewModel.showEditDialog && !isInPipMode) {
-            UnifiedEditDialog(
-                viewModel = viewModel,
-                onDismiss = { viewModel.showEditDialog = false }
-            )
-        }
+            if (viewModel.showEditDialog) {
+                UnifiedEditDialog(
+                    viewModel = viewModel,
+                    onDismiss = { viewModel.showEditDialog = false }
+                )
+            }
 
-        // زر تتبع القيادة وقفل الملاحة الموحد + لوحة عرض السرعة اللحظية المباشرة أسفله مباشرةً
-        Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = if (isInPipMode) 8.dp else 48.dp, end = if (isInPipMode) 8.dp else 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                if (!isInPipMode) {
+            // زر تتبع القيادة وقفل الملاحة الموحد + لوحة عرض السرعة اللحظية المباشرة أسفله مباشرةً
+            Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 48.dp, end = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                     // 1. زر تتبع القيادة وقفل الملاحة
                     Surface(
                         onClick = {
@@ -626,24 +641,24 @@ fun MapViewContainer(
                             )
                         }
                     }
-                }
 
-                // 2. عداد السرعة والوقت والمسافة للوصول (يظهر حصراً وفقط عند تفعيل وضع القيادة isNavLocked = true)
-                AnimatedVisibility(
-                    visible = isNavLocked,
-                    enter = fadeIn() + expandVertically(),
-                    exit = fadeOut() + shrinkVertically()
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        RealtimeSpeedometerWidget(
-                            viewModel = viewModel,
-                            isNavLocked = isNavLocked,
-                            locationPermissionGranted = locationPermissionGranted,
-                            allRoutes = allRoutes,
-                            selectedRouteIndex = selectedRouteIndex,
-                            destinationPoint = destinationPoint
-                        )
+                    // 2. عداد السرعة والوقت والمسافة للوصول (يظهر حصراً وفقط عند تفعيل وضع القيادة isNavLocked = true)
+                    AnimatedVisibility(
+                        visible = isNavLocked,
+                        enter = fadeIn() + expandVertically(),
+                        exit = fadeOut() + shrinkVertically()
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            RealtimeSpeedometerWidget(
+                                viewModel = viewModel,
+                                isNavLocked = isNavLocked,
+                                locationPermissionGranted = locationPermissionGranted,
+                                allRoutes = allRoutes,
+                                selectedRouteIndex = selectedRouteIndex,
+                                destinationPoint = destinationPoint
+                            )
+                        }
                     }
                 }
             }
