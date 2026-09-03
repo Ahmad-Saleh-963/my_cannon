@@ -128,10 +128,10 @@ fun MapViewContainer(
     @SuppressLint("ModifierParameter") modifier: Modifier = Modifier
 ) {
     val routeGeometry = if (allRoutes.isNotEmpty()) allRoutes[selectedRouteIndex.coerceIn(0, allRoutes.lastIndex)].geometry else null
-    
+
     // تعريف الأشكال والرموز للعلامات الجديدة
     // سيتم توليد أهداف وعلامات بشكل ديناميكي داخل الحلقة لضمان تحديث الأسماء
-    
+
     val destinationBitmap = rememberDestinationPinBitmap(
         label = destinationLabel.ifBlank { "الوجهة المطلوبة" }
     )
@@ -146,14 +146,14 @@ fun MapViewContainer(
         val distStr = String.format(Locale.US, "%.1f كم", route.distanceKm)
         val isSelected = index == selectedRouteIndex
         val summaryStr = if (route.summary.isNotBlank() && !route.summary.startsWith("مسار")) route.summary else null
-        
+
         val labelText = when {
             isSelected && summaryStr != null -> "الرئيسي ($summaryStr)  •  $timeStr  •  $distStr"
             isSelected -> "الرئيسي  •  $timeStr  •  $distStr"
             summaryStr != null -> "بديل ($summaryStr)  •  $timeStr  •  $distStr"
             else -> "بديل ${index + 1}  •  $timeStr  •  $distStr"
         }
-        
+
         val bgColor = if (isSelected) Color(0xFF004AAD) else Color(0xFF1E293B)
         rememberTextBitmap(labelText, bgColor)
     }
@@ -221,7 +221,7 @@ fun MapViewContainer(
                     // وضع السيارة في الأسفل 30% وإتاحة 70% لرؤية مسافة أكبر من الطريق
                     .padding(EdgeInsets(screenHeightPx.toDouble() * 0.70, 0.0, 0.0, 0.0))
                     .zoom(userDrivingZoom) // الحفاظ الكامل والمطلق على الزوم الذي حدده المستخدم بنفسه
-                    .pitch(0.0) 
+                    .pitch(0.0)
                     .build()
             )
         }
@@ -481,7 +481,7 @@ fun MapViewContainer(
                     }
                     showAccuracyRing = !isNavLocked
                 }
-                
+
                 var firstFix = true
                 mapView.location.addOnIndicatorPositionChangedListener { point ->
                     if (firstFix && locationPermissionGranted) {
@@ -496,7 +496,7 @@ fun MapViewContainer(
                     viewModel.saveLastLocation(point.latitude(), point.longitude())
                 }
             }
-            
+
             viewModel.cannonPos?.let { cannon ->
                 val isLoadingElev = cannon.id in viewModel.elevationLoadingIds
                 val elevLabel = when {
@@ -523,7 +523,7 @@ fun MapViewContainer(
                         else -> target.name
                     }
                     val marker = rememberMarkerBitmap(MarkerShape.SQUARE, elevLabel, targetColor, Icons.Default.TrackChanges)
-                    
+
                     PointAnnotation(point = Point.fromLngLat(target.geoPoint.longitude, target.geoPoint.latitude)) {
                         interactionsState.onLongClicked { viewModel.openEditDialog(target); true }
                         iconImage = IconImage(marker)
@@ -535,7 +535,7 @@ fun MapViewContainer(
                         val start = Point.fromLngLat(cannon.geoPoint.longitude, cannon.geoPoint.latitude)
                         val end = Point.fromLngLat(target.geoPoint.longitude, target.geoPoint.latitude)
                         val linePoints = listOf(start, end)
-                        
+
                         // 1. حدود سفلية ملونة داكنة لإبراز الخط بشكل دائر ومجوف كالمسار
                         PolylineAnnotation(points = linePoints) {
                             lineColor = Color.Black.copy(alpha = 0.65f)
@@ -550,17 +550,17 @@ fun MapViewContainer(
                             lineOpacity = 0.95
                             lineJoin = LineJoin.ROUND
                         }
-                        
+
                         // 3. حساب وعرض البيانات على الخط بدقة متناهية
                         val result = viewModel.getTargetResult(target)
                         if (result != null) {
                             val midLng = (start.longitude() + end.longitude()) / 2.0
                             val midLat = (start.latitude() + end.latitude()) / 2.0
                             val midPoint = Point.fromLngLat(midLng, midLat)
-                            
+
                             val labelText = String.format(Locale.US, "%.0f مليم  -  %.1f م", result.azimuthMils6000, result.distance)
                             val labelBitmap = rememberTextBitmap(labelText, targetColor.copy(alpha = 0.9f))
-                            
+
                             PointAnnotation(point = midPoint) {
                                 iconImage = IconImage(labelBitmap)
                                 iconAnchor = IconAnchor.CENTER
@@ -614,10 +614,10 @@ fun MapViewContainer(
                         if (result != null) {
                             val midLng = (start.longitude() + end.longitude()) / 2.0
                             val midLat = (start.latitude() + end.latitude()) / 2.0
-                            
+
                             val labelText = String.format(Locale.US, "%.0f مليم  -  %.1f م", result.azimuthMils6000, result.distance)
                             val labelBitmap = rememberTextBitmap(labelText, refColor.copy(alpha = 0.8f))
-                            
+
                             PointAnnotation(point = Point.fromLngLat(midLng, midLat)) {
                                 iconImage = IconImage(labelBitmap)
                                 iconAnchor = IconAnchor.CENTER
@@ -632,7 +632,7 @@ fun MapViewContainer(
             allRoutes.forEachIndexed { index, route ->
                 val isSelected = index == selectedRouteIndex
                 val points = route.geometry.coordinates()
-                
+
                 if (!isSelected) {
                     // أ) حد داكن سفلي لتمييز الطريق الفرعي بعرض أقل (11.0)
                     PolylineAnnotation(points = points) {
@@ -745,7 +745,7 @@ fun MapViewContainer(
             allRoutes.forEachIndexed { index, route ->
                 val isSelected = index == selectedRouteIndex
                 val points = route.geometry.coordinates()
-                
+
                 if (!isSelected && points.size > 5) {
                     val labelIndex = (points.size * 0.25).toInt().coerceAtLeast(1)
                     PointAnnotation(point = points[labelIndex]) {
@@ -891,7 +891,7 @@ fun calculateLiveEta(
     var routeTotalDurationMinutes: Int
 
     val hasRoute = allRoutes.isNotEmpty() && selectedRouteIndex in allRoutes.indices
-    
+
     if (hasRoute) {
         val route = allRoutes[selectedRouteIndex.coerceIn(0, allRoutes.lastIndex)]
         routeTotalDistanceKm = route.distanceKm
@@ -1274,16 +1274,16 @@ fun rememberDestinationPinBitmap(
         val padding = with(density) { 4.dp.toPx() }
         val fontSize = with(density) { 10.5.sp.toPx() }
 
-        val textPaint = android.graphics.Paint().apply {
+        val textPaint = Paint().apply {
             isAntiAlias = true
             textSize = fontSize
             this.color = android.graphics.Color.WHITE
-            textAlign = android.graphics.Paint.Align.CENTER
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.DEFAULT_BOLD
             setShadowLayer(8f, 0f, 2f, android.graphics.Color.BLACK)
         }
 
-        val textBounds = android.graphics.Rect()
+        val textBounds = Rect()
         textPaint.getTextBounds(label, 0, label.length, textBounds)
 
         val pinWidth = sizePx * 0.72f
@@ -1300,16 +1300,16 @@ fun rememberDestinationPinBitmap(
         val centerX = width / 2f
 
         // 1. رسم الظل الخارجي المضيء تحت الدبوس
-        val shadowPaint = android.graphics.Paint().apply {
+        val shadowPaint = Paint().apply {
             isAntiAlias = true
             this.color = android.graphics.Color.argb(120, 0, 0, 0)
-            style = android.graphics.Paint.Style.FILL
+            style = Paint.Style.FILL
             maskFilter = android.graphics.BlurMaskFilter(12f, android.graphics.BlurMaskFilter.Blur.NORMAL)
         }
         canvas.drawCircle(centerX, pinHeight - 4f, pinWidth * 0.28f, shadowPaint)
 
         // 2. رسم الدبوس الملاحي الرئيسي (Drop Pin Path)
-        val pinPath = android.graphics.Path().apply {
+        val pinPath = Path().apply {
             moveTo(centerX, pinHeight)
             cubicTo(
                 centerX - pinWidth * 0.45f, pinHeight * 0.60f,
@@ -1324,16 +1324,16 @@ fun rememberDestinationPinBitmap(
             close()
         }
 
-        val pinPaint = android.graphics.Paint().apply {
+        val pinPaint = Paint().apply {
             isAntiAlias = true
             this.color = color.toArgb()
-            style = android.graphics.Paint.Style.FILL
+            style = Paint.Style.FILL
         }
 
-        val borderPaint = android.graphics.Paint().apply {
+        val borderPaint = Paint().apply {
             isAntiAlias = true
             this.color = android.graphics.Color.WHITE
-            style = android.graphics.Paint.Style.STROKE
+            style = Paint.Style.STROKE
             strokeWidth = 4f
         }
 
@@ -1344,10 +1344,10 @@ fun rememberDestinationPinBitmap(
         val innerCircleRadius = pinWidth * 0.28f
         val innerCircleY = pinHeight * 0.38f
 
-        val whiteCirclePaint = android.graphics.Paint().apply {
+        val whiteCirclePaint = Paint().apply {
             isAntiAlias = true
             this.color = android.graphics.Color.WHITE
-            style = android.graphics.Paint.Style.FILL
+            style = Paint.Style.FILL
         }
         canvas.drawCircle(centerX, innerCircleY, innerCircleRadius, whiteCirclePaint)
 
@@ -1368,20 +1368,20 @@ fun rememberDestinationPinBitmap(
         }
 
         // 4. رسم ملصق الكبسولة الملاحي تحت الدبوس باسم المنطقة
-        val labelBgPaint = android.graphics.Paint().apply {
+        val labelBgPaint = Paint().apply {
             isAntiAlias = true
             this.color = android.graphics.Color.argb(230, 15, 23, 42) // كحلي زجاجي راقٍ
-            style = android.graphics.Paint.Style.FILL
+            style = Paint.Style.FILL
         }
 
-        val labelBorderPaint = android.graphics.Paint().apply {
+        val labelBorderPaint = Paint().apply {
             isAntiAlias = true
             this.color = color.toArgb()
-            style = android.graphics.Paint.Style.STROKE
+            style = Paint.Style.STROKE
             strokeWidth = 3f
         }
 
-        val labelRect = android.graphics.RectF(
+        val labelRect = RectF(
             centerX - (textBounds.width() / 2f) - padding * 3f,
             pinHeight + padding,
             centerX + (textBounds.width() / 2f) + padding * 3f,
@@ -1416,18 +1416,18 @@ fun rememberTextBitmap(text: String, bgColor: Color): Bitmap {
             textAlign = Paint.Align.CENTER
             typeface = Typeface.DEFAULT_BOLD
         }
-        
+
         val bounds = Rect()
         paint.getTextBounds(text, 0, text.length, bounds)
-        
+
         val padX = with(density) { 6.dp.toPx() }
         val padY = with(density) { 3.dp.toPx() }
         val width = bounds.width() + (padX * 2f)
         val height = bounds.height() + (padY * 2.5f)
-        
+
         val bitmap = createBitmap(width.toInt().coerceAtLeast(1), height.toInt().coerceAtLeast(1))
         val canvas = android.graphics.Canvas(bitmap)
-        
+
         val bgPaint = Paint().apply {
             isAntiAlias = true
             color = bgColor.toArgb()
@@ -1440,14 +1440,14 @@ fun rememberTextBitmap(text: String, bgColor: Color): Bitmap {
             style = Paint.Style.STROKE
             strokeWidth = with(density) { 1.2.dp.toPx() }
         }
-        
+
         val rect = RectF(0f, 0f, width, height)
         val cornerRadius = with(density) { 8.dp.toPx() }
         canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bgPaint)
         canvas.drawRoundRect(rect, cornerRadius, cornerRadius, borderPaint)
-        
+
         canvas.drawText(text, width / 2f, (height / 2f) - ((paint.descent() + paint.ascent()) / 2f), paint)
-        
+
         bitmap
     }
 }
@@ -1555,12 +1555,12 @@ fun UnifiedEditDialog(
                     fontWeight = FontWeight.ExtraBold,
                     color = MaterialTheme.colorScheme.primary
                 )
-                
+
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                 // Name & Description Section
                 EditSectionTitle("المعلومات الأساسية", Icons.Default.Info)
-                
+
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -1568,7 +1568,7 @@ fun UnifiedEditDialog(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
-                
+
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
@@ -1598,7 +1598,7 @@ fun UnifiedEditDialog(
 
                 // Coordinates Section
                 EditSectionTitle("الإحداثيات (Geo)", Icons.Default.LocationOn)
-                
+
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = lat,
@@ -1619,7 +1619,7 @@ fun UnifiedEditDialog(
                 }
 
                 EditSectionTitle("الإحداثيات (UTM)", Icons.Default.LocationOn)
-                
+
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = easting,
@@ -1667,17 +1667,17 @@ fun UnifiedEditDialog(
                     ) {
                         Text("إلغاء", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    
+
                     Button(
                         onClick = {
                             val finalLat = lat.toDoubleOrNull() ?: 0.0
                             val finalLon = lon.toDoubleOrNull() ?: 0.0
                             val finalGeo = GeoPoint(finalLat, finalLon)
-                            
+
                             val finalE = easting.toDoubleOrNull() ?: 0.0
                             val finalN = northing.toDoubleOrNull() ?: 0.0
                             val finalUtm = if (finalE != 0.0) UtmPoint(finalE, finalN, 37, 'N') else UtmConverter.fromGeoToUtm(finalGeo)
-                            
+
                             viewModel.updatePointFull(
                                 point = point,
                                 type = type,
@@ -1727,12 +1727,12 @@ fun rememberMarkerBitmap(
 ): Bitmap {
     val density = LocalDensity.current
     val painter = icon?.let { rememberVectorPainter(it) }
-    
+
     return remember(shape, name, color, icon) {
         val sizePx = with(density) { 50.dp.toPx() }
         val padding = with(density) { 4.dp.toPx() }
         val fontSize = with(density) { 11.sp.toPx() }
-        
+
         val textPaint = Paint().apply {
             isAntiAlias = true
             textSize = fontSize
@@ -1741,31 +1741,31 @@ fun rememberMarkerBitmap(
             typeface = Typeface.DEFAULT_BOLD
             setShadowLayer(6f, 0f, 2f, android.graphics.Color.BLACK)
         }
-        
+
         val textBounds = Rect()
         if (name.isNotEmpty()) {
             textPaint.getTextBounds(name, 0, name.length, textBounds)
         }
-        
+
         val shapeSize = sizePx * 0.7f
         val textExtra = if (name.isNotEmpty()) textBounds.height() + padding * 3f else 0f
-        
+
         val width = maxOf(shapeSize + padding * 4f, textBounds.width().toFloat() + padding * 6f)
         val height = shapeSize + textExtra * 2f
-        
+
         val bitmap = createBitmap(width.toInt().coerceAtLeast(1), height.toInt().coerceAtLeast(1))
         val canvas = android.graphics.Canvas(bitmap)
         val composeCanvas = Canvas(bitmap.asImageBitmap())
-        
+
         val centerX = width / 2f
         val shapeCenterY = height / 2f
-        
+
         val paint = Paint().apply {
             isAntiAlias = true
             this.color = color.toArgb()
             style = Paint.Style.FILL
         }
-        
+
         // Draw Shape with shadow/border centered exactly at (centerX, shapeCenterY)
         val borderPaint = Paint().apply {
             isAntiAlias = true
@@ -1799,7 +1799,7 @@ fun rememberMarkerBitmap(
                 canvas.drawPath(path, borderPaint)
             }
         }
-        
+
         // Draw Center Dot at exact center
         val dotPaint = Paint().apply {
             isAntiAlias = true

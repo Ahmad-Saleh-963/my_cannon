@@ -1,5 +1,8 @@
 package com.ahmadsaleh.map
 
+import com.ahmadsaleh.map.ui.screens.ListDetailsScreen
+import com.ahmadsaleh.map.ui.screens.ListsScreen
+import com.ahmadsaleh.map.ui.screens.SettingsScreens
 import android.Manifest
 import android.app.Activity
 import android.app.AppOpsManager
@@ -9,7 +12,6 @@ import android.content.Intent
 import android.content.IntentSender
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
@@ -76,6 +78,7 @@ import com.ahmadsaleh.map.ui.viewmodel.MapOfflineViewModel
 import com.mapbox.geojson.Point
 import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportState
 import com.ahmadsaleh.map.ui.screens.*
+import androidx.core.net.toUri
 
 class MainActivity : ComponentActivity() {
 
@@ -123,7 +126,7 @@ class MainActivity : ComponentActivity() {
             try {
                 val intent = Intent(
                     "android.settings.PICTURE_IN_PICTURE_SETTINGS",
-                    Uri.parse("package:$packageName")
+                    "package:$packageName".toUri()
                 )
                 startActivity(intent)
             } catch (_: Exception) {

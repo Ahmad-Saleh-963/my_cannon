@@ -1,5 +1,21 @@
 package com.ahmadsaleh.map.ui.screens
 
+import android.Manifest
+import android.app.Activity
+import android.app.AppOpsManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -94,23 +110,21 @@ fun SettingsScreens(
                 onClick = onNavigateToOffline
             )
 
-            val context = LocalContext.current
-            val activity = remember(context) {
-                var c = context
-                while (c is android.content.ContextWrapper) {
-                    if (c is MainActivity) return@remember c
-                    c = c.baseContext
-                }
-                null
-            }
+            var showPermissionsDialog by remember { mutableStateOf(false) }
 
             SettingsCard(
-                title = "النافذة العائمة (Picture-in-Picture)",
-                subtitle = "تفعيل إتاحة عرض الخريطة والسرعة كإطار طافٍ فوق التطبيقات",
-                icon = Icons.Default.PictureInPicture,
-                color = Color(0xFFFF9500),
-                onClick = { activity?.openPipSystemSettings() }
+                title = "إدارة صلاحيات وأذونات التطبيق",
+                subtitle = "عرض حالة وإدارة أذونات الموقع، الإشعارات، والنافذة العائمة",
+                icon = Icons.Default.VerifiedUser,
+                color = Color(0xFF30D158),
+                onClick = { showPermissionsDialog = true }
             )
+
+            if (showPermissionsDialog) {
+                PermissionsManagerDialog(
+                    onDismiss = { showPermissionsDialog = false }
+                )
+            }
 
             // بطاقة السلايدر والمفتاح التفاعلي الديناميكي لتشغيل/إطفاء وتحديد حد السرعة للتنبيه والاهتزاز
             var sliderPosition by remember(viewModel.maxSpeedLimit) { mutableFloatStateOf(viewModel.maxSpeedLimit.toFloat()) }
@@ -556,6 +570,312 @@ fun PointItemCard(
                 
                 IconButton(onClick = { viewModel.deletePoint(item) }) {
                     Icon(Icons.Default.Delete, "حذف", tint = Color.Red)
+                }
+            }
+        }
+    }
+}
+
+fun checkLocationGranted(context: Context): Boolean {
+    return ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+}
+
+fun checkNotificationsGranted(context: Context): Boolean {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    } else {
+        true
+    }
+}
+
+fun checkVibrationGranted(context: Context): Boolean {
+    return ContextCompat.checkSelfPermission(context, Manifest.permission.VIBRATE) == PackageManager.PERMISSION_GRANTED
+}
+
+fun checkPipGranted(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+    if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return false
+    return try {
+        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_PICTURE_IN_PICTURE, android.os.Process.myUid(), context.packageName)
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(AppOpsManager.OPSTR_PICTURE_IN_PICTURE, android.os.Process.myUid(), context.packageName)
+        }
+        mode == AppOpsManager.MODE_ALLOWED
+    } catch (_: Exception) {
+        true
+    }
+}
+
+fun openAppSettings(context: Context) {
+    try {
+        val intent = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:${context.packageName}")
+        )
+        context.startActivity(intent)
+    } catch (_: Exception) {
+        Toast.makeText(context, "يرجى فتح إعدادات الجهاز لمنح الصلاحية", Toast.LENGTH_LONG).show()
+    }
+}
+
+fun openPipSettings(context: Context) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        try {
+            val intent = Intent(
+                "android.settings.PICTURE_IN_PICTURE_SETTINGS",
+                Uri.parse("package:${context.packageName}")
+            )
+            context.startActivity(intent)
+        } catch (_: Exception) {
+            openAppSettings(context)
+        }
+    }
+}
+
+@Composable
+fun PermissionsManagerDialog(
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val activity = remember(context) {
+        var c = context
+        while (c is android.content.ContextWrapper) {
+            if (c is Activity) return@remember c
+            c = c.baseContext
+        }
+        null
+    }
+
+    var isLocationGranted by remember { mutableStateOf(checkLocationGranted(context)) }
+    var isNotificationGranted by remember { mutableStateOf(checkNotificationsGranted(context)) }
+    var isPipGrantedState by remember { mutableStateOf(checkPipGranted(context)) }
+    var isVibrationGranted by remember { mutableStateOf(checkVibrationGranted(context)) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        isLocationGranted = checkLocationGranted(context)
+        isNotificationGranted = checkNotificationsGranted(context)
+        isVibrationGranted = checkVibrationGranted(context)
+        isPipGrantedState = checkPipGranted(context)
+    }
+
+    DisposableEffect(Unit) {
+        isLocationGranted = checkLocationGranted(context)
+        isNotificationGranted = checkNotificationsGranted(context)
+        isPipGrantedState = checkPipGranted(context)
+        isVibrationGranted = checkVibrationGranted(context)
+        onDispose {}
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .wrapContentHeight(),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        Icons.Default.VerifiedUser,
+                        contentDescription = null,
+                        tint = Color(0xFF30D158),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "إدارة صلاحيات التطبيق",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                Text(
+                    text = "يوضح هذا الجدول الصلاحيات المطلوبة لعمل التطبيق، ويمكنك طلب وتفعيل أي صلاحية مباشرةً بنقرة واحدة:",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontSize = 11.sp,
+                    color = Color.Gray
+                )
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                // 1. صلاحية الموقع الجغرافي (طلب مباشر داخل التطبيق أولاً)
+                PermissionCardItem(
+                    title = "الموقع الجغرافي العالي الدقة (GPS)",
+                    description = "ضروري لتحديد موقعك المباشر ورسم مسار الملاحة وحساب السرعة بدقة.",
+                    isGranted = isLocationGranted,
+                    icon = Icons.Default.GpsFixed,
+                    color = Color.Cyan,
+                    onGrantClick = {
+                        if (!isLocationGranted) {
+                            val fineDenied = activity?.let { ActivityCompat.shouldShowRequestPermissionRationale(it, Manifest.permission.ACCESS_FINE_LOCATION) } ?: false
+                            if (fineDenied) {
+                                openAppSettings(context)
+                            } else {
+                                permissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                    )
+                                )
+                            }
+                        }
+                    }
+                )
+
+                // 2. النافذة العائمة (Picture-in-Picture)
+                PermissionCardItem(
+                    title = "النافذة العائمة (Picture-in-Picture)",
+                    description = "تتيح استمرار عرض الخريطة والسرعة في إطار طافٍ فوق التطبيقات.",
+                    isGranted = isPipGrantedState,
+                    icon = Icons.Default.PictureInPicture,
+                    color = Color(0xFFFF9500),
+                    onGrantClick = {
+                        if (!isPipGrantedState) {
+                            openPipSettings(context)
+                        }
+                    }
+                )
+
+                // 3. إشعارات الخدمة والتحميل (طلب مباشر داخل التطبيق أولاً)
+                PermissionCardItem(
+                    title = "إشعارات الخدمة والتحميل",
+                    description = "ضرورية لإظهار نسبة وسرعة تحميل الخرائط أوفلاين في شريط الإشعارات.",
+                    isGranted = isNotificationGranted,
+                    icon = Icons.Default.Notifications,
+                    color = Color(0xFF1976D2),
+                    onGrantClick = {
+                        if (!isNotificationGranted) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                val notifDenied = activity?.let { ActivityCompat.shouldShowRequestPermissionRationale(it, Manifest.permission.POST_NOTIFICATIONS) } ?: false
+                                if (notifDenied) {
+                                    openAppSettings(context)
+                                } else {
+                                    permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                                }
+                            } else {
+                                openAppSettings(context)
+                            }
+                        }
+                    }
+                )
+
+                // 4. صلاحية اهتزاز التنبيهات (طلب مباشر داخل التطبيق)
+                PermissionCardItem(
+                    title = "اهتزاز التنبيهات والسرعة",
+                    description = "تتيح اهتزاز الهاتف عند تجاوز حد السرعة المسموح أو الانحراف عن المسار.",
+                    isGranted = isVibrationGranted,
+                    icon = Icons.Default.Vibration,
+                    color = Color(0xFFFF3B30),
+                    onGrantClick = {
+                        if (!isVibrationGranted) {
+                            permissionLauncher.launch(arrayOf(Manifest.permission.VIBRATE))
+                        }
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(2.dp))
+
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth().height(42.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("تم - موافق", fontWeight = FontWeight.ExtraBold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PermissionCardItem(
+    title: String,
+    description: String,
+    isGranted: Boolean,
+    icon: ImageVector,
+    color: Color,
+    onGrantClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        border = BorderStroke(1.dp, if (isGranted) Color(0xFF30D158).copy(alpha = 0.4f) else Color(0xFFFF9500).copy(alpha = 0.4f))
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Surface(
+                        modifier = Modifier.size(32.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        color = color.copy(alpha = 0.12f)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall, fontSize = 12.5.sp)
+                }
+
+                Surface(
+                    color = if (isGranted) Color(0xFF30D158).copy(alpha = 0.15f) else Color(0xFFFF9500).copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(6.dp),
+                    border = BorderStroke(1.dp, if (isGranted) Color(0xFF30D158).copy(alpha = 0.5f) else Color(0xFFFF9500).copy(alpha = 0.5f))
+                ) {
+                    Text(
+                        text = if (isGranted) "✅ ممنوحة" else "⚠️ يحتاج تفعيل",
+                        fontWeight = FontWeight.ExtraBold,
+                        color = if (isGranted) Color(0xFF30D158) else Color(0xFFFF9500),
+                        fontSize = 10.sp,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            Text(description, fontSize = 10.sp, color = Color.Gray, lineHeight = 14.sp)
+
+            if (!isGranted) {
+                Button(
+                    onClick = onGrantClick,
+                    modifier = Modifier.fillMaxWidth().height(32.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9500))
+                ) {
+                    Icon(Icons.Default.TouchApp, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("طلب وتفعيل الصلاحية الآن", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
