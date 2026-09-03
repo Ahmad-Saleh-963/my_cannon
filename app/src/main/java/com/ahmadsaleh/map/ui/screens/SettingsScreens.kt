@@ -16,18 +16,23 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ahmadsaleh.map.MainActivity
 import com.ahmadsaleh.map.ui.viewmodel.CannonViewModel
 import com.ahmadsaleh.map.data.model.PointType
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreens(
+    viewModel: CannonViewModel = viewModel(),
     onBack: () -> Unit,
     onNavigateToOffline: () -> Unit,
     onNavigateToLists: () -> Unit,
@@ -102,6 +107,100 @@ fun SettingsScreens(
                 color = Color(0xFFFF9500),
                 onClick = { activity?.openPipSystemSettings() }
             )
+
+            // بطاقة السلايدر والمفتاح التفاعلي الديناميكي لتشغيل/إطفاء وتحديد حد السرعة للتنبيه والاهتزاز
+            var sliderPosition by remember(viewModel.maxSpeedLimit) { mutableFloatStateOf(viewModel.maxSpeedLimit.toFloat()) }
+            var isAlarmActive by remember(viewModel.isSpeedAlarmEnabled) { mutableStateOf(viewModel.isSpeedAlarmEnabled) }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                border = BorderStroke(1.dp, if (isAlarmActive) Color(0xFFFF3B30).copy(alpha = 0.5f) else Color.Gray.copy(alpha = 0.3f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (isAlarmActive) Icons.Default.Speed else Icons.Default.VolumeOff,
+                                contentDescription = null,
+                                tint = if (isAlarmActive) Color(0xFFFF3B30) else Color.Gray,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = "حد تحذير السرعة الفائقة",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (isAlarmActive) MaterialTheme.colorScheme.onSurface else Color.Gray
+                            )
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Surface(
+                                color = if (isAlarmActive) Color(0xFFFF3B30).copy(alpha = 0.18f) else Color.Gray.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, if (isAlarmActive) Color(0xFFFF3B30).copy(alpha = 0.5f) else Color.Gray.copy(alpha = 0.3f))
+                            ) {
+                                Text(
+                                    text = if (isAlarmActive) "⚠️ ${sliderPosition.roundToInt()} كم/س" else "🔕 معطل",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (isAlarmActive) Color(0xFFFF3B30) else Color.Gray,
+                                    fontSize = 11.5.sp,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+
+                            Switch(
+                                checked = isAlarmActive,
+                                onCheckedChange = { checked ->
+                                    isAlarmActive = checked
+                                    viewModel.toggleSpeedAlarm(checked)
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = Color(0xFFFF3B30),
+                                    uncheckedThumbColor = Color.LightGray,
+                                    uncheckedTrackColor = Color.DarkGray
+                                )
+                            )
+                        }
+                    }
+
+                    Text(
+                        text = if (isAlarmActive) "عند بلوغ السرعة المحددة أثناء القيادة، سيهتز الهاتف 3 مرات متتالية مع إظهار تنبيه تحذيري فوري." else "المنبه معطل حالياً ولن يهتز الهاتف أثناء القيادة السرعة العالية.",
+                        fontSize = 11.sp,
+                        color = Color.Gray
+                    )
+
+                    if (isAlarmActive) {
+                        Slider(
+                            value = sliderPosition,
+                            onValueChange = { sliderPosition = it },
+                            onValueChangeFinished = {
+                                viewModel.updateMaxSpeedLimit(sliderPosition.roundToInt())
+                            },
+                            valueRange = 60f..180f,
+                            steps = 23,
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color(0xFFFF3B30),
+                                activeTrackColor = Color(0xFFFF3B30),
+                                inactiveTrackColor = Color.DarkGray
+                            )
+                        )
+                    }
+                }
+            }
 
             HorizontalDivider(
                 modifier = Modifier.padding(vertical = 4.dp),

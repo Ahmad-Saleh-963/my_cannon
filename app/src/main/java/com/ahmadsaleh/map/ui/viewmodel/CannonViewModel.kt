@@ -63,6 +63,22 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
     var pointToEdit by mutableStateOf<Any?>(null)
     var manualAddType by mutableStateOf<PointType?>(null)
 
+    var maxSpeedLimit by mutableIntStateOf(sharedPrefs.getInt("max_speed_limit", 120))
+        private set
+
+    var isSpeedAlarmEnabled by mutableStateOf(sharedPrefs.getBoolean("is_speed_alarm_enabled", true))
+        private set
+
+    fun updateMaxSpeedLimit(newLimit: Int) {
+        maxSpeedLimit = newLimit.coerceIn(60, 180)
+        sharedPrefs.edit().putInt("max_speed_limit", maxSpeedLimit).apply()
+    }
+
+    fun toggleSpeedAlarm(enabled: Boolean) {
+        isSpeedAlarmEnabled = enabled
+        sharedPrefs.edit().putBoolean("is_speed_alarm_enabled", enabled).apply()
+    }
+
     var mainResult by mutableStateOf<CalculationResult?>(null)
         private set
 
@@ -213,6 +229,10 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
         currentSpeedDisplay = smoothedSpeedKmh.roundToInt()
         isMoving = currentSpeedKmh > 1.0f
 
+        if (isSpeedAlarmEnabled && (currentSpeedDisplay >= maxSpeedLimit || rawSpeedKmh >= maxSpeedLimit.toFloat())) {
+            triggerHighSpeedAlert()
+        }
+
         if (currentSpeedKmh > topSpeedKmh) {
             topSpeedKmh = currentSpeedKmh
         }
@@ -247,6 +267,49 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
             if (currentSpeedKmh > activeSessionTopSpeed) {
                 activeSessionTopSpeed = currentSpeedKmh.toDouble()
             }
+        }
+    }
+
+    private var lastHighSpeedAlertTime: Long = 0L
+
+    private fun triggerHighSpeedAlert() {
+        val now = System.currentTimeMillis()
+        if (now - lastHighSpeedAlertTime < 15000L) return
+        lastHighSpeedAlertTime = now
+
+        try {
+            val context = getApplication<Application>()
+
+            val vibrator = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+                vm?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+            }
+
+            vibrator?.let { v ->
+                if (v.hasVibrator()) {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        val timings = longArrayOf(0, 300, 200, 300, 200, 300)
+                        val amplitudes = intArrayOf(0, 255, 0, 255, 0, 255)
+                        v.vibrate(android.os.VibrationEffect.createWaveform(timings, amplitudes, -1))
+                    } else {
+                        @Suppress("DEPRECATION")
+                        v.vibrate(longArrayOf(0, 300, 200, 300, 200, 300), -1)
+                    }
+                }
+            }
+
+            viewModelScope.launch(Dispatchers.Main) {
+                android.widget.Toast.makeText(
+                    context,
+                    "⚠️ تحذير: تجاوَزت حد السرعة المسموح ($maxSpeedLimit كم/س)! يرجى التهدئة والسلامة.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
