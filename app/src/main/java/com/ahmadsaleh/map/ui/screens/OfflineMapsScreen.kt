@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -93,33 +95,24 @@ fun OfflineMapsScreen(
                 }
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    modifier = Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Text(
-                        text = "اختر مستوى الدقة الجغرافية الافتراضية لتحميل كافة المحافظات الـ 14 أوفلاين:",
+                        text = "اختر مستوى الدقة الجغرافية لتنزيل كافة المحافظات الـ 14 أوفلاين:",
                         color = Color.LightGray,
                         fontSize = 12.sp
                     )
 
-                    ZoomOptionItem(
-                        title = "🌟 دقة الشارع والبناء (Zoom 16 - موصى به)",
-                        subtitle = "تغطية الشوارع والأبنية في جميع المدن والبلدات.",
-                        selected = globalZoomAll == 16,
-                        onClick = { globalZoomAll = 16 }
-                    )
-
-                    ZoomOptionItem(
-                        title = "🚀 دقة فائقة الميدان (Zoom 18 - دقة قصوى)",
-                        subtitle = "أقصى دقة تفصيلية لأرقام الأبنية والممرات الميدانية.",
-                        selected = globalZoomAll == 18,
-                        onClick = { globalZoomAll = 18 }
-                    )
-
-                    ZoomOptionItem(
-                        title = "⚡ دقة متوسطة (Zoom 14 - الطرق والمدن)",
-                        subtitle = "المدن والمحاور والطرق الرئيسية والبديلة.",
-                        selected = globalZoomAll == 14,
-                        onClick = { globalZoomAll = 14 }
-                    )
+                    ZoomOptionItem("🚀 دقة فائقة الميدان (Zoom 18)", "أقصى دقة تفصيلية لأرقام المباني والمواقع التكتيكية (~350 MB)", globalZoomAll == 18) { globalZoomAll = 18 }
+                    ZoomOptionItem("🌟 دقة الشارع والبناء (Zoom 16 - موصى به)", "الشوارع الفرعية والأزقة والبنايات والمعالم المحلية (~120 MB)", globalZoomAll == 16) { globalZoomAll = 16 }
+                    ZoomOptionItem("⚡ دقة المحاور والمدن (Zoom 14)", "المدن والمحاور والطرق الرئيسية والبديلة (~45 MB)", globalZoomAll == 14) { globalZoomAll = 14 }
+                    ZoomOptionItem("📦 دقة الطرق السريعة (Zoom 12)", "الطرق الدولية والبلدات والحدود الإدارية (~18 MB)", globalZoomAll == 12) { globalZoomAll = 12 }
+                    ZoomOptionItem("🗺️ دقة المدن الكبرى (Zoom 10)", "المدن الكبرى والمحاور الجغرافية الرئيسية (~8 MB)", globalZoomAll == 10) { globalZoomAll = 10 }
+                    ZoomOptionItem("🌍 دقة الإقليم (Zoom 8)", "النطاق الإقليمي للمحافظة والحدود الخارجي (~3 MB)", globalZoomAll == 8) { globalZoomAll = 8 }
+                    ZoomOptionItem("🌐 دقة خاطفة (Zoom 5)", "الحدود والمسارات الإقليمية الخاطفة (~1 MB)", globalZoomAll == 5) { globalZoomAll = 5 }
+                    ZoomOptionItem("🏳️ دقة خريطة الدولة (Zoom 1)", "نظرة عامة على مستوى القطر والدولة (< 1 MB)", globalZoomAll == 1) { globalZoomAll = 1 }
                 }
             },
             confirmButton = {
@@ -150,7 +143,7 @@ fun OfflineMapsScreen(
                 title = {
                     Column {
                         Text("خرائط الميدان والمحافظات", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
-                        Text("تحميل أوفلاين كامل مع تحديد دقة الشارع", fontSize = 11.sp, color = Color.Gray)
+                        Text("تحميل أوفلاين كامل مع تحديد الدقة (Zoom 1 - 18)", fontSize = 11.sp, color = Color.Gray)
                     }
                 },
                 navigationIcon = {
@@ -259,7 +252,7 @@ fun OfflineMapsScreen(
                             modifier = Modifier.weight(1f)
                         ) {
                             Text(
-                                text = "📍 إمكانية تحديد الدقة (Zoom 12-18)",
+                                text = "📍 خيارات الدقة (Zoom 1 إلى 18)",
                                 fontSize = 10.sp,
                                 color = Color.LightGray,
                                 modifier = Modifier.padding(vertical = 4.dp, horizontal = 6.dp)
@@ -387,7 +380,10 @@ fun ProvinceDownloadDialog(
             }
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Text(
                     text = "اختر مستوى التفاصيل والدقة الجغرافية التي ترغب بتحميلها أوفلاين:",
                     color = Color.LightGray,
@@ -395,35 +391,16 @@ fun ProvinceDownloadDialog(
                     lineHeight = 16.sp
                 )
 
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(2.dp))
 
-                ZoomOptionItem(
-                    title = "🌟 دقة الشارع والبناء (Zoom 16 - موصى به)",
-                    subtitle = "الشوارع الفرعية والأزقة والبنايات والمعالم المحلية (متوازنة جداً).",
-                    selected = selectedZoom == 16,
-                    onClick = { selectedZoom = 16 }
-                )
-
-                ZoomOptionItem(
-                    title = "🚀 دقة فائقة الميدان (Zoom 18 - دقة قصوى)",
-                    subtitle = "أقصى دقة تفصيلية لأرقام المباني والممرات والمواقع التكتيكية.",
-                    selected = selectedZoom == 18,
-                    onClick = { selectedZoom = 18 }
-                )
-
-                ZoomOptionItem(
-                    title = "⚡ دقة متوسطة (Zoom 14 - الطرق والمدن)",
-                    subtitle = "المدن والبلدات والمحاور والطرق الرئيسية والبديلة.",
-                    selected = selectedZoom == 14,
-                    onClick = { selectedZoom = 14 }
-                )
-
-                ZoomOptionItem(
-                    title = "📦 دقة سريعة (Zoom 12 - الطرق الدولية)",
-                    subtitle = "المحافظة والحدود الإدارية والطرق الدولية فقط (حجم صغير).",
-                    selected = selectedZoom == 12,
-                    onClick = { selectedZoom = 12 }
-                )
+                ZoomOptionItem("🚀 دقة فائقة الميدان (Zoom 18)", "أقصى دقة تفصيلية لأرقام المباني والممرات والمقع التكتيكية (~350 MB)", selectedZoom == 18) { selectedZoom = 18 }
+                ZoomOptionItem("🌟 دقة الشارع والبناء (Zoom 16 - موصى به)", "الشوارع الفرعية والأزقة والبنايات والمعالم المحلية (~120 MB)", selectedZoom == 16) { selectedZoom = 16 }
+                ZoomOptionItem("⚡ دقة المحاور والمدن (Zoom 14)", "المدن والبلدات والمحاور والطرق الرئيسية والبديلة (~45 MB)", selectedZoom == 14) { selectedZoom = 14 }
+                ZoomOptionItem("📦 دقة الطرق السريعة (Zoom 12)", "الطرق الدولية والبلدات والحدود الإدارية للمحافظة (~18 MB)", selectedZoom == 12) { selectedZoom = 12 }
+                ZoomOptionItem("🗺️ دقة المدن الكبرى (Zoom 10)", "المدن الكبرى والمحاور الجغرافية الكبرى (~8 MB)", selectedZoom == 10) { selectedZoom = 10 }
+                ZoomOptionItem("🌍 دقة الإقليم (Zoom 8)", "النطاق الإقليمي للمحافظة والحدود الخارجي (~3 MB)", selectedZoom == 8) { selectedZoom = 8 }
+                ZoomOptionItem("🌐 دقة خاطفة (Zoom 5)", "الحدود والمسارات الإقليمية الخاطفة (~1 MB)", selectedZoom == 5) { selectedZoom = 5 }
+                ZoomOptionItem("🏳️ دقة خريطة الدولة (Zoom 1)", "نظرة عامة شائعة على مستوى القطر والدولة (< 1 MB)", selectedZoom == 1) { selectedZoom = 1 }
             }
         },
         confirmButton = {
@@ -535,8 +512,12 @@ fun ProvinceItem(
     val zoomBadgeText = when (province.targetZoom) {
         18 -> "دقة فائقة (Zoom 18)"
         16 -> "دقة الشارع (Zoom 16)"
-        14 -> "دقة متوسطة (Zoom 14)"
-        12 -> "دقة سريعة (Zoom 12)"
+        14 -> "دقة المحاور (Zoom 14)"
+        12 -> "دقة الطرق السريعة (Zoom 12)"
+        10 -> "دقة المدن الكبرى (Zoom 10)"
+        8 -> "دقة الإقليم (Zoom 8)"
+        5 -> "دقة خاطفة (Zoom 5)"
+        1 -> "دقة عامة (Zoom 1)"
         else -> "Zoom ${province.targetZoom}"
     }
 

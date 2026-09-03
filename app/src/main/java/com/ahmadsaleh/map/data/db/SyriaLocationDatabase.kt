@@ -2,6 +2,7 @@ package com.ahmadsaleh.map.data.db
 
 import com.ahmadsaleh.map.ui.viewmodel.SearchResult
 import com.mapbox.geojson.Point
+import java.util.Locale
 
 data class SyriaPlace(
     val name: String,
@@ -249,5 +250,30 @@ object SyriaLocationDatabase {
             .replace("ئ", "ي")
             .replace("ة", "ه")
             .lowercase()
+    }
+
+    fun findNearestPlace(lat: Double, lon: Double): String {
+        var minDistance = Double.MAX_VALUE
+        var nearestName = ""
+        val distArray = FloatArray(1)
+
+        for (place in places) {
+            android.location.Location.distanceBetween(
+                lat, lon,
+                place.lat, place.lng,
+                distArray
+            )
+            val distMeters = distArray[0].toDouble()
+            if (distMeters < minDistance) {
+                minDistance = distMeters
+                nearestName = "${place.province} - ${place.nameAr}"
+            }
+        }
+
+        return if (nearestName.isNotBlank() && minDistance < 25000.0) {
+            nearestName
+        } else {
+            String.format(Locale.US, "موقع جغرافيا (%.3f, %.3f)", lat, lon)
+        }
     }
 }

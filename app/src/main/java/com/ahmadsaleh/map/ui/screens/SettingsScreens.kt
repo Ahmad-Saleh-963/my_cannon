@@ -29,6 +29,7 @@ fun SettingsScreens(
     onBack: () -> Unit,
     onNavigateToOffline: () -> Unit,
     onNavigateToLists: () -> Unit,
+    onNavigateToDrivingRecords: () -> Unit = {},
     onExport: () -> Unit = {},
     onImport: () -> Unit = {}
 ) {
@@ -58,6 +59,14 @@ fun SettingsScreens(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            SettingsCard(
+                title = "سجلات وتاريخ القيادة",
+                subtitle = "عرض توثيق حركات وقيادة المركبة والمواقع والسرعة",
+                icon = Icons.Default.DirectionsCar,
+                color = Color(0xFF00E5FF),
+                onClick = onNavigateToDrivingRecords
+            )
+
             SettingsCard(
                 title = "القوائم (الأهداف والعلامات)",
                 subtitle = "عرض وتعديل كافة النقاط المحفوظة",

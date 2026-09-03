@@ -13,6 +13,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ahmadsaleh.map.data.db.AppDatabase
+import com.ahmadsaleh.map.data.db.entity.DriveSessionEntity
 import com.ahmadsaleh.map.data.io.ImportResult
 import com.ahmadsaleh.map.data.model.*
 import com.ahmadsaleh.map.data.repository.PointsRepository
@@ -20,6 +21,7 @@ import com.ahmadsaleh.map.domain.calculator.ArtilleryCalculator
 import com.ahmadsaleh.map.domain.calculator.UtmConverter
 import com.ahmadsaleh.map.domain.elevation.ElevationRepository
 import com.ahmadsaleh.map.domain.elevation.ElevationRepositoryImpl
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
@@ -228,6 +230,141 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
         if (currentSpeedKmh > topSpeedKmh) {
             topSpeedKmh = currentSpeedKmh
         }
+
+        if (isDrivingSessionActive) {
+            if (activeSessionLastLat != null && activeSessionLastLon != null) {
+                val distArray = FloatArray(1)
+                Location.distanceBetween(
+                    activeSessionLastLat!!, activeSessionLastLon!!,
+                    location.latitude, location.longitude,
+                    distArray
+                )
+                val deltaMeters = distArray[0].toDouble()
+                if (deltaMeters in 3.0..500.0 && (isMoving || currentSpeedKmh >= 1.5f)) {
+                    activeSessionDistanceMeters += deltaMeters
+                    activeSessionPathPoints.add(com.mapbox.geojson.Point.fromLngLat(location.longitude, location.latitude))
+                    activeSessionLastLat = location.latitude
+                    activeSessionLastLon = location.longitude
+                } else if (deltaMeters > 500.0) {
+                    activeSessionLastLat = location.latitude
+                    activeSessionLastLon = location.longitude
+                }
+            } else {
+                activeSessionLastLat = location.latitude
+                activeSessionLastLon = location.longitude
+                activeSessionStartLat = location.latitude
+                activeSessionStartLon = location.longitude
+                activeSessionStartPlace = com.ahmadsaleh.map.data.db.SyriaLocationDatabase.findNearestPlace(location.latitude, location.longitude)
+                activeSessionPathPoints.clear()
+                activeSessionPathPoints.add(com.mapbox.geojson.Point.fromLngLat(location.longitude, location.latitude))
+            }
+            if (currentSpeedKmh > activeSessionTopSpeed) {
+                activeSessionTopSpeed = currentSpeedKmh.toDouble()
+            }
+        }
+    }
+
+    private val driveSessionDao by lazy {
+        AppDatabase.getInstance(getApplication()).driveSessionDao()
+    }
+
+    private var activeSessionStartTime: Long = 0L
+    private var activeSessionStartLat: Double = 0.0
+    private var activeSessionStartLon: Double = 0.0
+    private var activeSessionStartPlace: String = ""
+    private var activeSessionTopSpeed: Double = 0.0
+    private var activeSessionDistanceMeters: Double = 0.0
+    private var activeSessionPathPoints = mutableListOf<com.mapbox.geojson.Point>()
+
+    val activeSessionDistanceKm: Double
+        get() = activeSessionDistanceMeters / 1000.0
+
+    val activeSessionElapsedTimeSeconds: Long
+        get() = if (isDrivingSessionActive && activeSessionStartTime > 0L) {
+            ((System.currentTimeMillis() - activeSessionStartTime) / 1000L).coerceAtLeast(0L)
+        } else {
+            0L
+        }
+    private var activeSessionLastLat: Double? = null
+    private var activeSessionLastLon: Double? = null
+    var isDrivingSessionActive by mutableStateOf(false)
+        private set
+
+    fun onDrivingModeToggled(enabled: Boolean) {
+        if (enabled) {
+            startDrivingSession()
+        } else {
+            stopDrivingSession()
+        }
+    }
+
+    private fun startDrivingSession() {
+        val lastLoc = getLastLocation()
+        val sLat = lastLoc?.first ?: 33.5138
+        val sLon = lastLoc?.second ?: 36.2765
+
+        activeSessionStartTime = System.currentTimeMillis()
+        activeSessionStartLat = sLat
+        activeSessionStartLon = sLon
+        activeSessionStartPlace = com.ahmadsaleh.map.data.db.SyriaLocationDatabase.findNearestPlace(sLat, sLon)
+        activeSessionTopSpeed = 0.0
+        activeSessionDistanceMeters = 0.0
+        activeSessionLastLat = null
+        activeSessionLastLon = null
+
+        speedHistory.clear()
+        averageMovingSpeedKmh = 0f
+        topSpeedKmh = 0f
+
+        activeSessionPathPoints.clear()
+
+        isDrivingSessionActive = true
+    }
+
+    private fun stopDrivingSession() {
+        if (!isDrivingSessionActive) return
+
+        val lastLoc = getLastLocation()
+        val eLat = lastLoc?.first ?: activeSessionLastLat ?: activeSessionStartLat
+        val eLon = lastLoc?.second ?: activeSessionLastLon ?: activeSessionStartLon
+        val endTime = System.currentTimeMillis()
+        val durationSeconds = ((endTime - activeSessionStartTime) / 1000L).coerceAtLeast(1)
+
+        val endPlaceName = com.ahmadsaleh.map.data.db.SyriaLocationDatabase.findNearestPlace(eLat, eLon)
+        val distanceKm = activeSessionDistanceMeters / 1000.0
+        val avgSpeedKmh = if (durationSeconds > 0) ((distanceKm / (durationSeconds / 3600.0))).coerceAtMost(180.0) else 0.0
+
+        if (activeSessionPathPoints.isEmpty() || activeSessionPathPoints.last().latitude() != eLat) {
+            activeSessionPathPoints.add(com.mapbox.geojson.Point.fromLngLat(eLon, eLat))
+        }
+
+        val routeGeometry = com.mapbox.geojson.LineString.fromLngLats(activeSessionPathPoints)
+
+        val session = DriveSessionEntity(
+            startTime = activeSessionStartTime,
+            endTime = endTime,
+            durationSeconds = durationSeconds,
+            startLat = activeSessionStartLat,
+            startLon = activeSessionStartLon,
+            startPlaceName = activeSessionStartPlace,
+            endLat = eLat,
+            endLon = eLon,
+            endPlaceName = endPlaceName,
+            topSpeedKmh = activeSessionTopSpeed,
+            averageSpeedKmh = if (avgSpeedKmh > 0.1) avgSpeedKmh else averageMovingSpeedKmh.toDouble(),
+            distanceKm = distanceKm,
+            geoJsonGeometry = routeGeometry.toJson()
+        )
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                driveSessionDao.insertDriveSession(session)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        isDrivingSessionActive = false
     }
 
     fun saveLastLocation(lat: Double, lon: Double) {

@@ -227,6 +227,14 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
         }
     }
 
+    // إخفاء تلقائي لشريط البحث بعد 3 ثواني إذا ظهر وبقي فارغاً بدون كتابة
+    LaunchedEffect(isSearchBarVisible, searchQuery) {
+        if (isSearchBarVisible && searchQuery.isEmpty()) {
+            kotlinx.coroutines.delay(3.seconds)
+            isSearchBarVisible = false
+        }
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
@@ -248,6 +256,22 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                         onSelectRoute = { offlineViewModel.selectRoute(it) },
                         destinationPoint = destinationPoint,
                         destinationLabel = searchQuery.ifBlank { "الوجهة المطلوبة" },
+                        onEnableGps = {
+                            if (locationPermissionGranted) {
+                                checkAndEnableGPS()
+                            } else {
+                                launcher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                    )
+                                )
+                            }
+                        },
+                        onClearRoute = {
+                            offlineViewModel.clearRoute()
+                            destinationPoint = null
+                        },
                         modifier = Modifier.fillMaxSize()
                     )
 
@@ -264,7 +288,7 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                             }
                     )
 
-                    // شريط البحث العلوي التفاعلي
+                    // شريط البحث العلوي المدمج والتفاعلي
                     AnimatedVisibility(
                         visible = isSearchBarVisible,
                         enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
@@ -273,14 +297,19 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                     ) {
                         Column(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 48.dp)
+                                .fillMaxWidth(0.88f)
+                                .padding(top = 44.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Surface(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp),
                                 shape = RoundedCornerShape(24.dp),
-                                color = Color.Black.copy(alpha = 0.8f),
-                                tonalElevation = 8.dp
+                                color = Color(0xFF090D16).copy(alpha = 0.90f),
+                                border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f)),
+                                tonalElevation = 8.dp,
+                                shadowElevation = 8.dp
                             ) {
                                 TextField(
                                     value = searchQuery,
@@ -288,7 +317,9 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                                         val currentPoint = viewModel.getLastLocation()?.let { Point.fromLngLat(it.second, it.first) }
                                         offlineViewModel.onSearchQueryChanged(it, currentPoint)
                                     },
-                                    placeholder = { Text("بحث عن منطقة...", color = Color.Gray, fontSize = 14.sp) },
+                                    placeholder = { Text("بحث عن منطقة...", color = Color.Gray, fontSize = 12.5.sp) },
+                                    singleLine = true,
+                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White),
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = TextFieldDefaults.colors(
                                         focusedContainerColor = Color.Transparent,
@@ -296,29 +327,27 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                                         focusedIndicatorColor = Color.Transparent,
                                         unfocusedIndicatorColor = Color.Transparent,
                                         focusedTextColor = Color.White,
-                                        unfocusedTextColor = Color.White
+                                        unfocusedTextColor = Color.White,
+                                        cursorColor = Color(0xFF00E5FF)
                                     ),
                                     leadingIcon = { 
                                         if (isSearching) {
                                             CircularProgressIndicator(
-                                                modifier = Modifier.size(20.dp),
+                                                modifier = Modifier.size(18.dp),
                                                 strokeWidth = 2.dp,
                                                 color = Color.Cyan
                                             )
                                         } else {
-                                            Icon(Icons.Default.Search, contentDescription = null, tint = Color.Cyan)
+                                            Icon(Icons.Default.Search, contentDescription = null, tint = Color.Cyan, modifier = Modifier.size(20.dp))
                                         }
                                     },
                                     trailingIcon = {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            if (searchQuery.isNotEmpty()) {
-                                                IconButton(onClick = { 
-                                                    offlineViewModel.onSearchQueryChanged("")
-                                                    destinationPoint = null
-                                                    offlineViewModel.clearRoute()
-                                                }) {
-                                                    Icon(Icons.Default.Close, contentDescription = null, tint = Color.Gray)
-                                                }
+                                        if (searchQuery.isNotEmpty()) {
+                                            IconButton(
+                                                onClick = { offlineViewModel.onSearchQueryChanged("") },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(Icons.Default.Close, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
                                             }
                                         }
                                     },
@@ -402,7 +431,8 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                     SettingsScreens(
                         onBack = { selectedTab = 0 },
                         onNavigateToOffline = { selectedTab = 5 },
-                        onNavigateToLists = { selectedTab = 6 }
+                        onNavigateToLists = { selectedTab = 6 },
+                        onNavigateToDrivingRecords = { selectedTab = 9 }
                     )
                 }
                 5 -> {
@@ -429,6 +459,11 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                         type = PointType.REFERENCE,
                         viewModel = viewModel,
                         onBack = { selectedTab = 6 }
+                    )
+                }
+                9 -> {
+                    com.ahmadsaleh.map.ui.screens.DrivingRecordsScreen(
+                        onBack = { selectedTab = 4 }
                     )
                 }
                 else -> {
@@ -651,7 +686,11 @@ private fun fetchAndSaveLocation(
                         )
                     }
                     
-                    // 3. تحريك الكاميرا فوراً للموقع
+                    // 3. تحريك الكاميرا الفوري الخاطف والسريع جداً للموقع
+                    mapViewportState.setCameraOptions {
+                        center(Point.fromLngLat(it.longitude, it.latitude))
+                        zoom(15.5)
+                    }
                     mapViewportState.transitionToFollowPuckState()
                 }
             }

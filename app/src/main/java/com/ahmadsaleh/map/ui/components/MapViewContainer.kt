@@ -26,6 +26,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Height
@@ -110,6 +113,8 @@ fun MapViewContainer(
     onSelectRoute: (Int) -> Unit = {},
     destinationPoint: Point? = null,
     destinationLabel: String = "",
+    onEnableGps: () -> Unit = {},
+    onClearRoute: () -> Unit = {},
     @SuppressLint("ModifierParameter") modifier: Modifier = Modifier
 ) {
     val routeGeometry = if (allRoutes.isNotEmpty()) allRoutes[selectedRouteIndex.coerceIn(0, allRoutes.lastIndex)].geometry else null
@@ -193,6 +198,13 @@ fun MapViewContainer(
                 if (currentZoom > 0) userDrivingZoom = currentZoom
             }
 
+            viewModel.getLastLocation()?.let { (lat, lon) ->
+                mapViewportState.setCameraOptions {
+                    center(Point.fromLngLat(lon, lat))
+                    zoom(userDrivingZoom)
+                }
+            }
+
             mapViewportState.transitionToFollowPuckState(
                 followPuckViewportStateOptions = FollowPuckViewportStateOptions.Builder()
                     .bearing(FollowPuckViewportStateBearing.SyncWithLocationPuck)
@@ -202,6 +214,13 @@ fun MapViewContainer(
                     .pitch(0.0) 
                     .build()
             )
+        }
+    }
+
+    LaunchedEffect(isNavLocked) {
+        viewModel.onDrivingModeToggled(isNavLocked)
+        if (!isNavLocked) {
+            onClearRoute()
         }
     }
 
@@ -567,8 +586,10 @@ fun MapViewContainer(
                 // 1. زر تتبع القيادة وقفل الملاحة
                 Surface(
                     onClick = {
-                        if (locationPermissionGranted) {
-                            isNavLocked = !isNavLocked
+                        onEnableGps()
+                        isNavLocked = !isNavLocked
+                        if (!isNavLocked) {
+                            onClearRoute()
                         }
                     },
                     modifier = Modifier.size(44.dp),
@@ -625,30 +646,38 @@ fun CardinalDirectionsOverlay() {
 }
 
 data class EtaInfo(
-    val remainingMinutes: Int,
+    val totalDistanceKm: Double,
+    val coveredDistanceKm: Double,
     val remainingDistanceKm: Double,
-    val arrivalTimeFormatted: String,
-    val formattedDurationText: String
+    val totalDurationMinutes: Int,
+    val remainingMinutesInstant: Int?,
+    val remainingMinutesAverage: Int?,
+    val arrivalTimeInstant: String,
+    val arrivalTimeAverage: String,
+    val durationTextInstant: String,
+    val durationTextAverage: String,
+    val driverAverageSpeedKmh: Float
 )
 
 fun calculateLiveEta(
     currentSpeedKmh: Float,
     averageMovingSpeedKmh: Float,
+    coveredDistanceKm: Double,
     allRoutes: List<RouteInfo>,
     selectedRouteIndex: Int,
     destinationPoint: Point?,
     currentLat: Double?,
     currentLon: Double?
 ): EtaInfo? {
-    var baseDistanceKm: Double
-    var baseDurationMinutes: Int
+    var routeTotalDistanceKm: Double
+    var routeTotalDurationMinutes: Int
 
     val hasRoute = allRoutes.isNotEmpty() && selectedRouteIndex in allRoutes.indices
     
     if (hasRoute) {
         val route = allRoutes[selectedRouteIndex.coerceIn(0, allRoutes.lastIndex)]
-        baseDistanceKm = route.distanceKm
-        baseDurationMinutes = route.durationMinutes
+        routeTotalDistanceKm = route.distanceKm
+        routeTotalDurationMinutes = route.durationMinutes
     } else if (destinationPoint != null && currentLat != null && currentLon != null) {
         val results = FloatArray(1)
         Location.distanceBetween(
@@ -656,55 +685,63 @@ fun calculateLiveEta(
             destinationPoint.latitude(), destinationPoint.longitude(),
             results
         )
-        baseDistanceKm = results[0] / 1000.0
-        baseDurationMinutes = ((baseDistanceKm / 40.0) * 60.0).toInt().coerceAtLeast(1)
+        val remKm = results[0] / 1000.0
+        routeTotalDistanceKm = remKm + coveredDistanceKm
+        routeTotalDurationMinutes = ((routeTotalDistanceKm / 45.0) * 60.0).roundToInt().coerceAtLeast(1)
     } else {
         return null
     }
 
-    if (baseDistanceKm <= 0.05) {
+    val remainingDistanceKm = (routeTotalDistanceKm - coveredDistanceKm).coerceAtLeast(0.0)
+
+    if (remainingDistanceKm <= 0.05) {
         return EtaInfo(
-            remainingMinutes = 0,
+            totalDistanceKm = routeTotalDistanceKm,
+            coveredDistanceKm = routeTotalDistanceKm,
             remainingDistanceKm = 0.0,
-            arrivalTimeFormatted = "وصلت للهدف",
-            formattedDurationText = "تم الوصول"
+            totalDurationMinutes = routeTotalDurationMinutes,
+            remainingMinutesInstant = 0,
+            remainingMinutesAverage = 0,
+            arrivalTimeInstant = "وصلت للهدف",
+            arrivalTimeAverage = "تم الوصول",
+            durationTextInstant = "تم الوصول",
+            durationTextAverage = "تم الوصول",
+            driverAverageSpeedKmh = averageMovingSpeedKmh
         )
     }
 
-    // خوارزمية ذكية لحساب السرعة الفعالة لمعدل القيادة والحركة المباشرة
-    val routeBaseSpeedKmh = if (hasRoute && baseDurationMinutes > 0) {
-        (baseDistanceKm / (baseDurationMinutes / 60.0)).coerceIn(15.0, 110.0)
-    } else {
-        40.0
-    }
-
-    val effectiveSpeedKmh = when {
-        currentSpeedKmh >= 10f -> {
-            // مزيج ذكي بين السرعة اللحظية ومعدل الحركة وسرعة المسار
-            (0.40 * currentSpeedKmh) + (0.45 * averageMovingSpeedKmh.coerceAtLeast(10f)) + (0.15 * routeBaseSpeedKmh)
-        }
-        averageMovingSpeedKmh >= 15f -> {
-            // عند التوقف المؤقت في الإشارة، الاعتماد على معدل حركة السائق بدلاً من التصفير
-            (0.70 * averageMovingSpeedKmh) + (0.30 * routeBaseSpeedKmh)
-        }
-        else -> routeBaseSpeedKmh
-    }
-
-    val finalDurationMinutes = ((baseDistanceKm / effectiveSpeedKmh) * 60.0).roundToInt().coerceAtLeast(1)
-
-    val calendar = Calendar.getInstance().apply {
-        add(Calendar.MINUTE, finalDurationMinutes)
-    }
     val timeFormat = SimpleDateFormat("hh:mm a", Locale("ar"))
-    val arrivalTimeFormatted = timeFormat.format(calendar.time)
 
-    val formattedDurationText = formatDurationArabic(finalDurationMinutes)
+    // 1. حساب توقيت السرعة اللحظية المباشرة (Instant Velocity ETA)
+    val (durationInstantText, arrivalInstantText, minInstant) = if (currentSpeedKmh >= 3.0f) {
+        val durMin = ((remainingDistanceKm / currentSpeedKmh.toDouble()) * 60.0).roundToInt().coerceAtLeast(1)
+        val cal = Calendar.getInstance().apply { add(Calendar.MINUTE, durMin) }
+        Triple(formatDurationArabic(durMin), timeFormat.format(cal.time), durMin)
+    } else {
+        Triple("--", "--", null)
+    }
+
+    // 2. حساب توقيت معدل حركة القيادة للسائق (Moving Average Speed ETA)
+    val (durationAvgText, arrivalAvgText, minAverage) = if (averageMovingSpeedKmh >= 5.0f) {
+        val durMin = ((remainingDistanceKm / averageMovingSpeedKmh.toDouble()) * 60.0).roundToInt().coerceAtLeast(1)
+        val cal = Calendar.getInstance().apply { add(Calendar.MINUTE, durMin) }
+        Triple(formatDurationArabic(durMin), timeFormat.format(cal.time), durMin)
+    } else {
+        Triple("--", "--", null)
+    }
 
     return EtaInfo(
-        remainingMinutes = finalDurationMinutes,
-        remainingDistanceKm = baseDistanceKm,
-        arrivalTimeFormatted = arrivalTimeFormatted,
-        formattedDurationText = formattedDurationText
+        totalDistanceKm = routeTotalDistanceKm,
+        coveredDistanceKm = coveredDistanceKm,
+        remainingDistanceKm = remainingDistanceKm,
+        totalDurationMinutes = routeTotalDurationMinutes,
+        remainingMinutesInstant = minInstant,
+        remainingMinutesAverage = minAverage,
+        arrivalTimeInstant = arrivalInstantText,
+        arrivalTimeAverage = arrivalAvgText,
+        durationTextInstant = durationInstantText,
+        durationTextAverage = durationAvgText,
+        driverAverageSpeedKmh = averageMovingSpeedKmh
     )
 }
 
@@ -734,6 +771,7 @@ fun RealtimeSpeedometerWidget(
     val etaInfo = remember(
         viewModel.currentSpeedKmh,
         viewModel.averageMovingSpeedKmh,
+        viewModel.activeSessionDistanceKm,
         allRoutes,
         selectedRouteIndex,
         destinationPoint,
@@ -742,6 +780,7 @@ fun RealtimeSpeedometerWidget(
         calculateLiveEta(
             currentSpeedKmh = viewModel.currentSpeedKmh,
             averageMovingSpeedKmh = viewModel.averageMovingSpeedKmh,
+            coveredDistanceKm = viewModel.activeSessionDistanceKm,
             allRoutes = allRoutes,
             selectedRouteIndex = selectedRouteIndex,
             destinationPoint = destinationPoint,
@@ -767,23 +806,37 @@ fun RealtimeSpeedometerWidget(
     }
 
     var showDetails by remember { mutableStateOf(false) }
+    var liveElapsedSeconds by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(isNavLocked, viewModel.isDrivingSessionActive) {
+        while (isNavLocked && viewModel.isDrivingSessionActive) {
+            liveElapsedSeconds = viewModel.activeSessionElapsedTimeSeconds
+            delay(1.seconds)
+        }
+    }
+
+    val widgetWidth by animateDpAsState(
+        targetValue = if (showDetails) 96.dp else 78.dp,
+        animationSpec = tween(durationMillis = 250),
+        label = "WidgetWidth"
+    )
 
     Surface(
         onClick = { showDetails = !showDetails },
-        shape = RoundedCornerShape(14.dp),
-        color = Color(0xFF090D16).copy(alpha = 0.88f),
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF090D16).copy(alpha = 0.90f),
         border = BorderStroke(
             width = if (isNavLocked || isMoving) 1.5.dp else 1.0.dp,
             color = borderColor
         ),
-        shadowElevation = 6.dp,
-        modifier = Modifier.width(78.dp)
+        shadowElevation = 8.dp,
+        modifier = Modifier.width(widgetWidth)
     ) {
         Column(
             modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // مؤشر النبض المباشر للـ GPS
+            // 1. مؤشر النبض المباشر للـ GPS
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center,
@@ -810,7 +863,7 @@ fun RealtimeSpeedometerWidget(
                 )
             }
 
-            // عرض السرعة الحقيقية اللحظية متناسقة ومصممة باحترافية
+            // 2. عرض السرعة الحقيقية اللحظية المباشرة
             Text(
                 text = "$speedDisplay",
                 style = MaterialTheme.typography.titleLarge.copy(
@@ -820,48 +873,38 @@ fun RealtimeSpeedometerWidget(
                 )
             )
 
-            // وحدة قياس السرعة (كم/س)
             Text(
                 text = "كم/س",
                 style = MaterialTheme.typography.labelSmall.copy(
-                    fontSize = 9.sp,
+                    fontSize = 8.5.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White.copy(alpha = 0.8f)
                 )
             )
 
-            // عرض المدة المتوقعة للوصول بدقة عالية متناسقة
+            // 3. في الوضع المدمج الافتراضي: عرض المسافة الكلية للمسار وسهم التوسيع
             etaInfo?.let { eta ->
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 4.dp),
-                    color = Color.White.copy(alpha = 0.18f)
-                )
-
-                // 1. المدة الزمنية المتبقية
-                Text(
-                    text = eta.formattedDurationText,
-                    fontSize = 9.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF00E5FF)
-                )
-
-                // 2. وقت الوصول على الساعة
-                Text(
-                    text = eta.arrivalTimeFormatted,
-                    fontSize = 8.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFFFFD600)
-                )
-
-                // 3. المسافة المتبقية
-                Text(
-                    text = String.format(Locale.US, "%.1f كم", eta.remainingDistanceKm),
-                    fontSize = 8.sp,
-                    color = Color.White.copy(alpha = 0.65f)
-                )
+                if (!showDetails) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 3.dp),
+                        color = Color.White.copy(alpha = 0.15f)
+                    )
+                    Text(
+                        text = String.format(Locale.US, "%.1f كم", eta.totalDistanceKm),
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF00E5FF)
+                    )
+                    Icon(
+                        imageVector = Icons.Default.ExpandMore,
+                        contentDescription = "توسيع التفاصيل",
+                        tint = Color.Gray,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
             }
 
-            // تفاصيل إضافية تظهر عند النقر على العداد
+            // 4. في الوضع الممتد التفاعلي (عند النقر للتوسيع): عرض كافة البيانات الشاملة والدقيقة
             AnimatedVisibility(
                 visible = showDetails,
                 enter = fadeIn() + expandVertically(),
@@ -869,28 +912,131 @@ fun RealtimeSpeedometerWidget(
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(top = 3.dp)
+                    modifier = Modifier.padding(top = 2.dp)
                 ) {
-                    if (etaInfo == null) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 3.dp),
-                            color = Color.White.copy(alpha = 0.15f)
-                        )
-                    }
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        color = Color.White.copy(alpha = 0.2f)
+                    )
+
+                    // أ) متوسط السرعة وأقصى سرعة
+                    val avgSpeed = viewModel.averageMovingSpeedKmh.roundToInt()
+                    val topSpeed = viewModel.topSpeedKmh.roundToInt()
+
                     Text(
-                        text = "أقصى سرعة",
-                        fontSize = 7.5.sp,
-                        color = Color.White.copy(alpha = 0.5f)
+                        text = "المعدل: $avgSpeed كم/س",
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF30D158)
                     )
                     Text(
-                        text = "${viewModel.topSpeedKmh.roundToInt()} كم/س",
-                        fontSize = 9.5.sp,
+                        text = "الأقصى: $topSpeed كم/س",
+                        fontSize = 7.5.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFFFFD600)
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 3.dp),
+                        color = Color.White.copy(alpha = 0.10f)
+                    )
+
+                    // ب) تفاصيل المسافات الثلاثة: الكلية، المقطوعة، المتبقية
+                    etaInfo?.let { eta ->
+                        Text(
+                            text = "الكلية: " + String.format(Locale.US, "%.1f كم", eta.totalDistanceKm),
+                            fontSize = 7.5.sp,
+                            color = Color.LightGray
+                        )
+                        Text(
+                            text = "المقطوع: " + String.format(Locale.US, "%.1f كم", eta.coveredDistanceKm),
+                            fontSize = 7.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF30D158)
+                        )
+                        Text(
+                            text = "المتبقي: " + String.format(Locale.US, "%.1f كم", eta.remainingDistanceKm),
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFF00E5FF)
+                        )
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 3.dp),
+                            color = Color.White.copy(alpha = 0.10f)
+                        )
+
+                        // جـ) مؤقت الرحلة التفاعلي المباشر بالثواني والدقائق والساعات
+                        if (liveElapsedSeconds > 0) {
+                            Text(
+                                text = "مؤقت الرحلة",
+                                fontSize = 7.sp,
+                                color = Color.Gray
+                            )
+                            Text(
+                                text = formatElapsedTimer(liveElapsedSeconds),
+                                fontSize = 8.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                        }
+
+                        // د) توقيت الوصول حسب معدل السرعة والتوقيت اللحظي
+                        Text(
+                            text = "الوصول (بالمعدل)",
+                            fontSize = 7.sp,
+                            color = Color(0xFF30D158)
+                        )
+                        Text(
+                            text = eta.arrivalTimeAverage,
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFF30D158)
+                        )
+                        if (eta.durationTextAverage != "--") {
+                            Text(
+                                text = "(${eta.durationTextAverage})",
+                                fontSize = 7.5.sp,
+                                color = Color.White.copy(alpha = 0.7f)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(2.dp))
+
+                        Text(
+                            text = "الوصول (اللحظي)",
+                            fontSize = 7.sp,
+                            color = Color(0xFFFFD600)
+                        )
+                        Text(
+                            text = eta.arrivalTimeInstant,
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFFFD600)
+                        )
+                    }
+
+                    Icon(
+                        imageVector = Icons.Default.ExpandLess,
+                        contentDescription = "طوي التفاصيل",
+                        tint = Color.Gray,
+                        modifier = Modifier.padding(top = 4.dp).size(12.dp)
                     )
                 }
             }
         }
+    }
+}
+
+fun formatElapsedTimer(totalSeconds: Long): String {
+    val hrs = totalSeconds / 3600L
+    val mins = (totalSeconds % 3600L) / 60L
+    val secs = totalSeconds % 60L
+    return if (hrs > 0) {
+        String.format(Locale.US, "%02d:%02d:%02d", hrs, mins, secs)
+    } else {
+        String.format(Locale.US, "%02d:%02d", mins, secs)
     }
 }
 
