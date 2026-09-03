@@ -522,23 +522,71 @@ fun MapViewContainer(
             }
 
             // 2. ثانياً: رسم المسار الأساسي الرئيسي المختار بتباين عالي جداً وعريض (10.0 / 16.0) فوق الطرق الأخرى
-            routeGeometry?.let {
-                val points = it.coordinates()
-                
-                // أ) الحد السفلي الداكن الحاد للمسار الرئيسي
-                PolylineAnnotation(points = points) {
-                    lineColor = Color(0xFF001428) // كحلي داكن جداً
-                    lineWidth = 16.0
-                    lineOpacity = 1.0
-                    lineJoin = LineJoin.ROUND
+            routeGeometry?.let { lineString ->
+                val points = lineString.coordinates()
+                val currentLoc = viewModel.getLastLocation()
+
+                // تقسيم المسار إلى: قسم مقنوع مقطوع (خلف السائق) وقسم متبقي (أمام السائق) كأنظمة Google Maps
+                val (traversedPoints, remainingPoints) = remember(lineString, currentLoc, isNavLocked) {
+                    if (isNavLocked && currentLoc != null && points.size > 1) {
+                        val driverPoint = Point.fromLngLat(currentLoc.second, currentLoc.first)
+
+                        var minDistance = Double.MAX_VALUE
+                        var closestIndex = 0
+
+                        for (i in points.indices) {
+                            val results = FloatArray(1)
+                            Location.distanceBetween(
+                                driverPoint.latitude(), driverPoint.longitude(),
+                                points[i].latitude(), points[i].longitude(),
+                                results
+                            )
+                            val dist = results[0].toDouble()
+                            if (dist < minDistance) {
+                                minDistance = dist
+                                closestIndex = i
+                            }
+                        }
+
+                        val traversed = points.subList(0, (closestIndex + 1).coerceAtMost(points.size)).toMutableList()
+                        traversed.add(driverPoint)
+
+                        val remaining = mutableListOf<Point>()
+                        remaining.add(driverPoint)
+                        remaining.addAll(points.subList(closestIndex.coerceAtLeast(0), points.size))
+
+                        Pair(traversed, remaining)
+                    } else {
+                        Pair(emptyList<Point>(), points)
+                    }
                 }
-                
-                // ب) جسم المسار الرئيسي الزاهي والتفاعلي (أزرق ملكي متألق)
-                PolylineAnnotation(points = points) {
-                    lineColor = Color(0xFF0284C7) // أزرق ملكي زاهٍ ومتألق
-                    lineWidth = 10.0
-                    lineOpacity = 1.0
-                    lineJoin = LineJoin.ROUND
+
+                if (traversedPoints.size > 1) {
+                    // أ) المسار المقطوع المتروك خلف السائق (شفاف رمادي/فولاذي خافت كأنظمة Google Maps)
+                    PolylineAnnotation(points = traversedPoints) {
+                        lineColor = Color(0xFF64748B)
+                        lineWidth = 7.0
+                        lineOpacity = 0.45
+                        lineJoin = LineJoin.ROUND
+                    }
+                }
+
+                if (remainingPoints.size > 1) {
+                    // ب) الحد السفلي الداكن الحاد للمسار المتبقي أمام السائق
+                    PolylineAnnotation(points = remainingPoints) {
+                        lineColor = Color(0xFF001428)
+                        lineWidth = 16.0
+                        lineOpacity = 1.0
+                        lineJoin = LineJoin.ROUND
+                    }
+
+                    // جـ) جسم المسار المتبقي الزاهي والتفاعلي المضيء أمام السائق (أزرق ملكي زاهٍ)
+                    PolylineAnnotation(points = remainingPoints) {
+                        lineColor = Color(0xFF0284C7)
+                        lineWidth = 10.0
+                        lineOpacity = 1.0
+                        lineJoin = LineJoin.ROUND
+                    }
                 }
             }
 
