@@ -19,8 +19,9 @@ import com.mapbox.common.TileStore
 import com.mapbox.geojson.BoundingBox
 import com.mapbox.geojson.LineString
 import com.mapbox.geojson.Point
-import com.mapbox.maps.OfflineManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -75,14 +76,9 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
     private val tileStore: TileStore by lazy {
         MapboxOfflineRegistry.getTileStore(application)
     }
-    private val offlineManager: OfflineManager by lazy {
-        MapboxOfflineRegistry.getOfflineManager()
-    }
 
     private val _provinces = MutableStateFlow<List<ProvinceOfflineState>>(emptyList())
     val provinces: StateFlow<List<ProvinceOfflineState>> = _provinces.asStateFlow()
-
-    private val _autoDownloadEnabled = MutableStateFlow(prefs.getBoolean("auto_download", false))
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -296,9 +292,27 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    private var searchJob: kotlinx.coroutines.Job? = null
+
     fun onSearchQueryChanged(query: String, proximity: Point? = null) {
         _searchQuery.value = query
-        executeSearch(query, proximity)
+
+        searchJob?.cancel()
+
+        val trimmed = query.trim()
+        if (trimmed.length < 2) {
+            _proResults.value = emptyList()
+            _isSearching.value = false
+            return
+        }
+
+        searchJob = viewModelScope.launch {
+            delay(250.milliseconds) // Debounce typing keystrokes
+            _isSearching.value = true
+            val results = if (isOnline()) searchOnlinePro(trimmed, proximity) else searchOfflinePro(trimmed)
+            _proResults.value = results
+            _isSearching.value = false
+        }
     }
 
     private fun isOnline(): Boolean {
@@ -308,186 +322,155 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
-    private fun executeSearch(query: String, proximity: Point? = null) {
-        if (query.length < 2) {
-            _proResults.value = emptyList()
-            return
+    private suspend fun searchOnlinePro(query: String, proximity: Point?): List<SearchResult> = coroutineScope {
+        val encodedQuery = withContext(Dispatchers.IO) { java.net.URLEncoder.encode(query.trim(), "UTF-8") }
+
+        val localDbDeferred = async(Dispatchers.IO) {
+            com.ahmadsaleh.map.data.db.SyriaLocationDatabase.search(query)
         }
-        viewModelScope.launch {
-            _isSearching.value = true
-            val results = if (isOnline()) searchOnlinePro(query, proximity) else searchOfflinePro(query)
-            _proResults.value = results
-            _isSearching.value = false
+
+        val nominatimDeferred = async(Dispatchers.IO) {
+            val list = mutableListOf<SearchResult>()
+            try {
+                val nominatimUrl = "https://nominatim.openstreetmap.org/search?q=$encodedQuery&countrycodes=sy&format=json&addressdetails=1&accept-language=ar&limit=20"
+                val connection = URL(nominatimUrl).openConnection() as java.net.HttpURLConnection
+                connection.setRequestProperty("User-Agent", "SyriaTacticalMapApp/1.0")
+                connection.connectTimeout = 2000
+                connection.readTimeout = 2000
+
+                if (connection.responseCode == 200) {
+                    val jsonText = connection.inputStream.bufferedReader().use { it.readText() }
+                    val jsonArray = org.json.JSONArray(jsonText)
+
+                    for (i in 0 until jsonArray.length()) {
+                        val item = jsonArray.getJSONObject(i)
+                        val lat = item.getDouble("lat")
+                        val lon = item.getDouble("lon")
+                        val displayName = item.optString("display_name", "")
+                        val name = item.optString("name", "")
+                        val type = item.optString("type", "")
+                        val category = item.optString("class", "")
+
+                        val address = item.optJSONObject("address")
+                        val road = address?.optString("road", "") ?: ""
+                        val suburb = address?.optString("suburb", "") ?: address?.optString("neighbourhood", "") ?: ""
+                        val city = address?.optString("city", "") ?: address?.optString("town", "") ?: address?.optString("village", "") ?: ""
+                        val state = address?.optString("state", "") ?: address?.optString("county", "") ?: ""
+
+                        val mainName = when {
+                            name.isNotBlank() -> name
+                            road.isNotBlank() -> road
+                            suburb.isNotBlank() -> suburb
+                            else -> displayName.split(",").firstOrNull()?.trim() ?: query
+                        }
+
+                        val typeBadge = when {
+                            category == "junction" || type == "roundabout" || mainName.contains("دوار") || mainName.contains("ساحة") -> "🔄 "
+                            category == "leisure" || type == "park" || mainName.contains("حديقة") || mainName.contains("منتزه") -> "🌳 "
+                            category == "highway" || road.isNotBlank() || mainName.contains("شارع") || mainName.contains("طريق") -> "🛣️ "
+                            suburb.isNotBlank() || mainName.contains("حي") || mainName.contains("حارة") -> "🏡 "
+                            else -> "📍 "
+                        }
+
+                        val formattedTitle = typeBadge + mainName
+                        val fullAddress = listOf(road, suburb, city, state).filter { it.isNotBlank() }.distinct().joinToString(" • ").ifBlank { displayName }
+                        val province = extractSyrianProvince("$displayName $state $city")
+
+                        list.add(SearchResult(formattedTitle, fullAddress, province, Point.fromLngLat(lon, lat)))
+                    }
+                }
+            } catch (_: Exception) {}
+            list
         }
-    }
 
-    private suspend fun searchOnlinePro(query: String, proximity: Point?): List<SearchResult> = withContext(Dispatchers.IO) {
-        val resultsList = mutableListOf<SearchResult>()
+        val photonDeferred = async(Dispatchers.IO) {
+            val list = mutableListOf<SearchResult>()
+            try {
+                val photonUrl = "https://photon.komoot.io/api/?q=$encodedQuery&lang=ar&bbox=35.6,32.3,42.4,37.3&limit=20"
+                val connection = URL(photonUrl).openConnection() as java.net.HttpURLConnection
+                connection.setRequestProperty("User-Agent", "SyriaTacticalMapApp/1.0")
+                connection.connectTimeout = 2000
+                connection.readTimeout = 2000
 
-        // 1. قاعدة البيانات المحلية السورية الفورية
-        val syriaDbResults = com.ahmadsaleh.map.data.db.SyriaLocationDatabase.search(query)
-        resultsList.addAll(syriaDbResults)
+                if (connection.responseCode == 200) {
+                    val jsonText = connection.inputStream.bufferedReader().use { it.readText() }
+                    val jsonObj = JSONObject(jsonText)
+                    val features = jsonObj.getJSONArray("features")
 
-        // تنظيف وتجهيز النص للبحث العربي السوري الدقيق
-        val encodedQuery = java.net.URLEncoder.encode(query.trim(), "UTF-8")
+                    for (i in 0 until features.length()) {
+                        val f = features.getJSONObject(i)
+                        val geom = f.getJSONObject("geometry")
+                        val coords = geom.getJSONArray("coordinates")
+                        val lon = coords.getDouble(0)
+                        val lat = coords.getDouble(1)
 
-        // أ) OpenStreetMap Nominatim Free Geocoding API (مجاني 100% بدون API Key - محدد بالقطر العربي السوري sy)
-        try {
-            val nominatimUrl = "https://nominatim.openstreetmap.org/search?q=$encodedQuery&countrycodes=sy&format=json&addressdetails=1&accept-language=ar&limit=20"
-            val connection = URL(nominatimUrl).openConnection() as java.net.HttpURLConnection
-            connection.setRequestProperty("User-Agent", "SyriaTacticalMapApp/1.0")
-            connection.connectTimeout = 3000
-            connection.readTimeout = 3000
+                        val props = f.getJSONObject("properties")
+                        val name = props.optString("name", "")
+                        val street = props.optString("street", "")
+                        val district = props.optString("district", "")
+                        val city = props.optString("city", "")
+                        val state = props.optString("state", "")
 
-            if (connection.responseCode == 200) {
-                val jsonText = connection.inputStream.bufferedReader().use { it.readText() }
-                val jsonArray = org.json.JSONArray(jsonText)
+                        val mainName = when {
+                            name.isNotBlank() -> name
+                            street.isNotBlank() -> street
+                            district.isNotBlank() -> district
+                            else -> query
+                        }
 
-                for (i in 0 until jsonArray.length()) {
-                    val item = jsonArray.getJSONObject(i)
-                    val lat = item.getDouble("lat")
-                    val lon = item.getDouble("lon")
-                    val displayName = item.optString("display_name", "")
-                    val name = item.optString("name", "")
-                    val type = item.optString("type", "")
-                    val category = item.optString("class", "")
+                        val osmValue = props.optString("osm_value", "")
+                        val typeBadge = when {
+                            osmValue == "roundabout" || mainName.contains("دوار") || mainName.contains("ساحة") -> "🔄 "
+                            osmValue == "park" || mainName.contains("حديقة") || mainName.contains("منتزه") -> "🌳 "
+                            street.isNotBlank() || mainName.contains("شارع") || mainName.contains("طريق") -> "🛣️ "
+                            district.isNotBlank() || mainName.contains("حي") -> "🏡 "
+                            else -> "📍 "
+                        }
 
-                    val address = item.optJSONObject("address")
-                    val road = address?.optString("road", "") ?: ""
-                    val suburb = address?.optString("suburb", "") ?: address?.optString("neighbourhood", "") ?: ""
-                    val city = address?.optString("city", "") ?: address?.optString("town", "") ?: address?.optString("village", "") ?: ""
-                    val state = address?.optString("state", "") ?: address?.optString("county", "") ?: ""
+                        val formattedTitle = typeBadge + mainName
+                        val fullAddr = listOf(street, district, city, state, "سوريا").filter { it.isNotBlank() }.distinct().joinToString(" • ")
+                        val province = extractSyrianProvince(fullAddr)
 
-                    val mainName = when {
-                        name.isNotBlank() -> name
-                        road.isNotBlank() -> road
-                        suburb.isNotBlank() -> suburb
-                        else -> displayName.split(",").firstOrNull()?.trim() ?: query
+                        list.add(SearchResult(formattedTitle, fullAddr, province, Point.fromLngLat(lon, lat)))
                     }
+                }
+            } catch (_: Exception) {}
+            list
+        }
 
-                    val typeBadge = when {
-                        category == "junction" || type == "roundabout" || mainName.contains("دوار") || mainName.contains("ساحة") -> "🔄 "
-                        category == "leisure" || type == "park" || mainName.contains("حديقة") || mainName.contains("منتزه") -> "🌳 "
-                        category == "highway" || road.isNotBlank() || mainName.contains("شارع") || mainName.contains("طريق") -> "🛣️ "
-                        suburb.isNotBlank() || mainName.contains("حي") || mainName.contains("حارة") -> "🏡 "
-                        else -> "📍 "
+        val mapboxDeferred = async(Dispatchers.IO) {
+            val list = mutableListOf<SearchResult>()
+            try {
+                val token = getApplication<Application>().getString(R.string.mapbox_access_token)
+                if (token.isNotBlank()) {
+                    val types = "region,district,place,locality,neighborhood,address,poi"
+                    var mapboxUrl = "https://api.mapbox.com/geocoding/v5/mapbox.places/$encodedQuery.json?access_token=$token&country=sy&types=$types&limit=15&autocomplete=true&fuzzyMatch=true&language=ar"
+                    proximity?.let { mapboxUrl += "&proximity=${it.longitude()},${it.latitude()}" }
+
+                    val response = URL(mapboxUrl).readText()
+                    val json = JSONObject(response)
+                    val features = json.getJSONArray("features")
+
+                    for (i in 0 until features.length()) {
+                        val f = features.getJSONObject(i)
+                        val placeName = f.getString("place_name")
+                        val text = if (f.has("text")) f.getString("text") else ""
+
+                        val parts = placeName.split(",")
+                        val name = text.ifEmpty { parts[0].trim() }
+                        val contextText = if (parts.size > 1) parts.drop(1).joinToString(",").trim() else "سوريا"
+                        val province = extractSyrianProvince(placeName)
+
+                        val center = f.getJSONArray("center")
+                        list.add(SearchResult("📍 $name", contextText, province, Point.fromLngLat(center.getDouble(0), center.getDouble(1))))
                     }
-
-                    val formattedTitle = typeBadge + mainName
-                    val fullAddress = listOf(road, suburb, city, state).filter { it.isNotBlank() }.distinct().joinToString(" • ").ifBlank { displayName }
-                    val province = extractSyrianProvince(displayName + " " + state + " " + city)
-
-                    resultsList.add(SearchResult(formattedTitle, fullAddress, province, Point.fromLngLat(lon, lat)))
                 }
-            }
-        } catch (_: Exception) {}
+            } catch (_: Exception) {}
+            list
+        }
 
-        // ب) Photon Komoot Free OSM API (مجاني 100% بدون API Key - محدد بالنطاق الجغرافي لسوريا)
-        try {
-            val photonUrl = "https://photon.komoot.io/api/?q=$encodedQuery&lang=ar&bbox=35.6,32.3,42.4,37.3&limit=20"
-            val connection = URL(photonUrl).openConnection() as java.net.HttpURLConnection
-            connection.setRequestProperty("User-Agent", "SyriaTacticalMapApp/1.0")
-            connection.connectTimeout = 3000
-            connection.readTimeout = 3000
-
-            if (connection.responseCode == 200) {
-                val jsonText = connection.inputStream.bufferedReader().use { it.readText() }
-                val jsonObj = JSONObject(jsonText)
-                val features = jsonObj.getJSONArray("features")
-
-                for (i in 0 until features.length()) {
-                    val f = features.getJSONObject(i)
-                    val geom = f.getJSONObject("geometry")
-                    val coords = geom.getJSONArray("coordinates")
-                    val lon = coords.getDouble(0)
-                    val lat = coords.getDouble(1)
-
-                    val props = f.getJSONObject("properties")
-                    val name = props.optString("name", "")
-                    val street = props.optString("street", "")
-                    val district = props.optString("district", "")
-                    val city = props.optString("city", "")
-                    val state = props.optString("state", "")
-
-                    val mainName = when {
-                        name.isNotBlank() -> name
-                        street.isNotBlank() -> street
-                        district.isNotBlank() -> district
-                        else -> query
-                    }
-
-                    val osmValue = props.optString("osm_value", "")
-                    val typeBadge = when {
-                        osmValue == "roundabout" || mainName.contains("دوار") || mainName.contains("ساحة") -> "🔄 "
-                        osmValue == "park" || mainName.contains("حديقة") || mainName.contains("منتزه") -> "🌳 "
-                        street.isNotBlank() || mainName.contains("شارع") || mainName.contains("طريق") -> "🛣️ "
-                        district.isNotBlank() || mainName.contains("حي") -> "🏡 "
-                        else -> "📍 "
-                    }
-
-                    val formattedTitle = typeBadge + mainName
-                    val fullAddr = listOf(street, district, city, state, "سوريا").filter { it.isNotBlank() }.distinct().joinToString(" • ")
-                    val province = extractSyrianProvince(fullAddr)
-
-                    resultsList.add(SearchResult(formattedTitle, fullAddr, province, Point.fromLngLat(lon, lat)))
-                }
-            }
-        } catch (_: Exception) {}
-
-        // جـ) Mapbox Places API (محاولة مكملة إذا توفر المفتاح المجاني)
-        try {
-            val token = getApplication<Application>().getString(R.string.mapbox_access_token)
-            if (token.isNotBlank()) {
-                val types = "region,district,place,locality,neighborhood,address,poi"
-                var mapboxUrl = "https://api.mapbox.com/geocoding/v5/mapbox.places/$encodedQuery.json?access_token=$token&country=sy&types=$types&limit=15&autocomplete=true&fuzzyMatch=true&language=ar"
-                proximity?.let { mapboxUrl += "&proximity=${it.longitude()},${it.latitude()}" }
-
-                val response = URL(mapboxUrl).readText()
-                val json = JSONObject(response)
-                val features = json.getJSONArray("features")
-
-                for (i in 0 until features.length()) {
-                    val f = features.getJSONObject(i)
-                    val placeName = f.getString("place_name")
-                    val text = if (f.has("text")) f.getString("text") else ""
-
-                    val parts = placeName.split(",")
-                    val name = if (text.isNotEmpty()) text else parts[0].trim()
-                    val contextText = if (parts.size > 1) parts.drop(1).joinToString(",").trim() else "سوريا"
-                    val province = extractSyrianProvince(placeName)
-
-                    val center = f.getJSONArray("center")
-                    resultsList.add(SearchResult("📍 $name", contextText, province, Point.fromLngLat(center.getDouble(0), center.getDouble(1))))
-                }
-            }
-        } catch (_: Exception) {}
-
-        // د) Geocode Maps Co Free API (مصدر محلي وعالمي مكمل مجاني بدون مفتاح)
-        try {
-            val geocodeUrl = "https://geocode.maps.co/search?q=$encodedQuery+سوريا&api_key="
-            val connection = URL(geocodeUrl).openConnection() as java.net.HttpURLConnection
-            connection.setRequestProperty("User-Agent", "SyriaTacticalMapApp/1.0")
-            connection.connectTimeout = 2500
-            connection.readTimeout = 2500
-
-            if (connection.responseCode == 200) {
-                val jsonText = connection.inputStream.bufferedReader().use { it.readText() }
-                val jsonArray = org.json.JSONArray(jsonText)
-
-                for (i in 0 until jsonArray.length()) {
-                    val item = jsonArray.getJSONObject(i)
-                    val lat = item.getDouble("lat")
-                    val lon = item.getDouble("lon")
-                    val displayName = item.optString("display_name", "")
-                    val mainName = displayName.split(",").firstOrNull()?.trim() ?: query
-                    val province = extractSyrianProvince(displayName)
-
-                    resultsList.add(SearchResult("📍 $mainName", displayName, province, Point.fromLngLat(lon, lat)))
-                }
-            }
-        } catch (_: Exception) {}
-
-        deduplicateResults(resultsList).take(35)
+        val combinedResults = localDbDeferred.await() + nominatimDeferred.await() + photonDeferred.await() + mapboxDeferred.await()
+        deduplicateResults(combinedResults).take(30)
     }
 
     private fun cleanArabicName(input: String): String {
@@ -604,7 +587,7 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun selectRoute(index: Int) {
-        if (index in 0 until _currentRoutes.value.size) {
+        if (index in _currentRoutes.value.indices) {
             _selectedRouteIndex.value = index
         }
     }
