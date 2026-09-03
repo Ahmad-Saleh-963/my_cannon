@@ -2,6 +2,7 @@
 
 package com.ahmadsaleh.map.ui.components
 
+import com.ahmadsaleh.map.MainActivity
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.graphics.Paint
@@ -113,6 +114,7 @@ fun MapViewContainer(
     onSelectRoute: (Int) -> Unit = {},
     destinationPoint: Point? = null,
     destinationLabel: String = "",
+    isInPipMode: Boolean = false,
     onEnableGps: () -> Unit = {},
     onClearRoute: () -> Unit = {},
     @SuppressLint("ModifierParameter") modifier: Modifier = Modifier
@@ -217,8 +219,18 @@ fun MapViewContainer(
         }
     }
 
+    val activity = remember(context) {
+        var c = context
+        while (c is android.content.ContextWrapper) {
+            if (c is MainActivity) return@remember c
+            c = c.baseContext
+        }
+        null
+    }
+
     LaunchedEffect(isNavLocked) {
         viewModel.onDrivingModeToggled(isNavLocked)
+        activity?.updatePipParams(isNavLocked)
         if (!isNavLocked) {
             onClearRoute()
         }
@@ -566,9 +578,11 @@ fun MapViewContainer(
                 }
             }
         }
-        CardinalDirectionsOverlay()
+        if (!isInPipMode) {
+            CardinalDirectionsOverlay()
+        }
 
-        if (viewModel.showEditDialog) {
+        if (viewModel.showEditDialog && !isInPipMode) {
             UnifiedEditDialog(
                 viewModel = viewModel,
                 onDismiss = { viewModel.showEditDialog = false }
@@ -580,35 +594,37 @@ fun MapViewContainer(
             Column(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = 48.dp, end = 16.dp),
+                    .padding(top = if (isInPipMode) 8.dp else 48.dp, end = if (isInPipMode) 8.dp else 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // 1. زر تتبع القيادة وقفل الملاحة
-                Surface(
-                    onClick = {
-                        onEnableGps()
-                        isNavLocked = !isNavLocked
-                        if (!isNavLocked) {
-                            onClearRoute()
+                if (!isInPipMode) {
+                    // 1. زر تتبع القيادة وقفل الملاحة
+                    Surface(
+                        onClick = {
+                            onEnableGps()
+                            isNavLocked = !isNavLocked
+                            if (!isNavLocked) {
+                                onClearRoute()
+                            }
+                        },
+                        modifier = Modifier.size(44.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isNavLocked) Color(0xFF0A84FF) else Color(0xFF0D131D).copy(alpha = 0.85f),
+                        border = BorderStroke(
+                            1.5.dp,
+                            if (isNavLocked) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.35f)
+                        ),
+                        tonalElevation = 8.dp,
+                        shadowElevation = 6.dp
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Navigation,
+                                contentDescription = "تتبع القيادة",
+                                tint = if (isNavLocked) Color.White else Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.size(22.dp)
+                            )
                         }
-                    },
-                    modifier = Modifier.size(44.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    color = if (isNavLocked) Color(0xFF0A84FF) else Color(0xFF0D131D).copy(alpha = 0.85f),
-                    border = BorderStroke(
-                        1.5.dp,
-                        if (isNavLocked) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.35f)
-                    ),
-                    tonalElevation = 8.dp,
-                    shadowElevation = 6.dp
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.Navigation,
-                            contentDescription = "تتبع القيادة",
-                            tint = if (isNavLocked) Color.White else Color.White.copy(alpha = 0.85f),
-                            modifier = Modifier.size(22.dp)
-                        )
                     }
                 }
 

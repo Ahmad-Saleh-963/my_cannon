@@ -38,7 +38,7 @@ fun OfflineMapsScreen(
     viewModel: MapOfflineViewModel = viewModel()
 ) {
     val provinces by viewModel.provinces.collectAsState()
-    val searchQuery by viewModel.searchQuery.collectAsState()
+    val offlineSearchQuery by viewModel.offlineSearchQuery.collectAsState()
 
     LaunchedEffect(Unit) {
         viewModel.refreshDownloadedStates()
@@ -49,11 +49,11 @@ fun OfflineMapsScreen(
     var provinceForDownloadDialog by remember { mutableStateOf<ProvinceOfflineState?>(null) }
     var globalZoomAll by remember { mutableIntStateOf(16) }
 
-    val filteredProvinces = remember(provinces, searchQuery, activeFilter) {
+    val filteredProvinces = remember(provinces, offlineSearchQuery, activeFilter) {
         provinces.filter { province ->
-            val matchesSearch = searchQuery.isBlank() ||
-                    province.name.contains(searchQuery, ignoreCase = true) ||
-                    province.nameAr.contains(searchQuery)
+            val matchesSearch = offlineSearchQuery.isBlank() ||
+                    province.name.contains(offlineSearchQuery, ignoreCase = true) ||
+                    province.nameAr.contains(offlineSearchQuery)
 
             val matchesFilter = when (activeFilter) {
                 OfflineFilter.ALL -> true
@@ -262,10 +262,10 @@ fun OfflineMapsScreen(
                 }
             }
 
-            // حقل البحث التفاعلي
+            // حقل البحث التفاعلي الخاص بشاشة الخرائط أوفلاين
             OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { viewModel.onSearchQueryChanged(it) },
+                value = offlineSearchQuery,
+                onValueChange = { viewModel.onOfflineSearchQueryChanged(it) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 4.dp)
@@ -273,8 +273,8 @@ fun OfflineMapsScreen(
                 placeholder = { Text("ابحث عن مدينة أو محافظة سورية...", color = Color.Gray, fontSize = 13.sp) },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.Cyan, modifier = Modifier.size(20.dp)) },
                 trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { viewModel.onSearchQueryChanged("") }) {
+                    if (offlineSearchQuery.isNotEmpty()) {
+                        IconButton(onClick = { viewModel.onOfflineSearchQueryChanged("") }) {
                             Icon(Icons.Default.Close, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(18.dp))
                         }
                     }

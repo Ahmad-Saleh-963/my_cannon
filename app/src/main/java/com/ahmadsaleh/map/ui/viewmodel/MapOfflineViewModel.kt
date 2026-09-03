@@ -97,6 +97,13 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
+    private val _offlineSearchQuery = MutableStateFlow("")
+    val offlineSearchQuery: StateFlow<String> = _offlineSearchQuery.asStateFlow()
+
+    fun onOfflineSearchQueryChanged(query: String) {
+        _offlineSearchQuery.value = query
+    }
+
     private val _poiList = MutableStateFlow<Map<String, List<Pair<String, Point>>>>(emptyMap())
 
     private val _isSearching = MutableStateFlow(false)

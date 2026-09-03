@@ -18,8 +18,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.ahmadsaleh.map.MainActivity
 import com.ahmadsaleh.map.ui.viewmodel.CannonViewModel
 import com.ahmadsaleh.map.data.model.PointType
 
@@ -60,7 +62,7 @@ fun SettingsScreens(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             SettingsCard(
-                title = "سجلات وتاريخ القيادة",
+                title = "سجلات وتاريخ الرحلات",
                 subtitle = "عرض توثيق حركات وقيادة المركبة والمواقع والسرعة",
                 icon = Icons.Default.DirectionsCar,
                 color = Color(0xFF00E5FF),
@@ -81,6 +83,24 @@ fun SettingsScreens(
                 icon = Icons.Default.Map,
                 color = Color(0xFF388E3C),
                 onClick = onNavigateToOffline
+            )
+
+            val context = LocalContext.current
+            val activity = remember(context) {
+                var c = context
+                while (c is android.content.ContextWrapper) {
+                    if (c is MainActivity) return@remember c
+                    c = c.baseContext
+                }
+                null
+            }
+
+            SettingsCard(
+                title = "النافذة العائمة (Picture-in-Picture)",
+                subtitle = "تفعيل إتاحة عرض الخريطة والسرعة كإطار طافٍ فوق التطبيقات",
+                icon = Icons.Default.PictureInPicture,
+                color = Color(0xFFFF9500),
+                onClick = { activity?.openPipSystemSettings() }
             )
 
             HorizontalDivider(

@@ -2,9 +2,18 @@ package com.ahmadsaleh.map
 
 import android.Manifest
 import android.app.Activity
+import android.app.AppOpsManager
+import android.app.PictureInPictureParams
+import android.content.Context
+import android.content.Intent
 import android.content.IntentSender
 import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import android.util.Rational
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.core.view.WindowCompat
@@ -71,21 +80,119 @@ import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportS
 import com.ahmadsaleh.map.ui.screens.*
 
 class MainActivity : ComponentActivity() {
+
+    private val isInPipModeState = mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // إبقاء الشاشة مضيئة دائماً أثناء عمل التطبيق
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         
-        // إخفاء أشرطة النظام (الحالة والتنقل) للحصول على تجربة كاملة الشاشة
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val controller = WindowInsetsControllerCompat(window, window.decorView)
         controller.hide(WindowInsetsCompat.Type.systemBars())
         controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
         enableEdgeToEdge()
+
         setContent {
             My_cannonTheme {
-                MainScreen()
+                val isInPip by isInPipModeState
+                MainScreen(isInPipMode = isInPip)
+            }
+        }
+    }
+
+    fun isPipPermissionAllowed(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return false
+
+        return try {
+            val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_PICTURE_IN_PICTURE, android.os.Process.myUid(), packageName)
+            } else {
+                @Suppress("DEPRECATION")
+                appOps.checkOpNoThrow(AppOpsManager.OPSTR_PICTURE_IN_PICTURE, android.os.Process.myUid(), packageName)
+            }
+            mode == AppOpsManager.MODE_ALLOWED
+        } catch (_: Exception) {
+            true
+        }
+    }
+
+    fun openPipSystemSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                val intent = Intent(
+                    "android.settings.PICTURE_IN_PICTURE_SETTINGS",
+                    Uri.parse("package:$packageName")
+                )
+                startActivity(intent)
+            } catch (_: Exception) {
+                try {
+                    val intent = Intent("android.settings.PICTURE_IN_PICTURE_SETTINGS")
+                    startActivity(intent)
+                } catch (_: Exception) {
+                    Toast.makeText(this, "يرجى تفعيل صلاحية النافذة العائمة من إعدادات الجهاز", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    fun updatePipParams(enabled: Boolean) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+            try {
+                val aspectRatio = Rational(3, 4)
+                val paramsBuilder = PictureInPictureParams.Builder()
+                    .setAspectRatio(aspectRatio)
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    paramsBuilder.setAutoEnterEnabled(enabled)
+                }
+
+                setPictureInPictureParams(paramsBuilder.build())
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+            enterNavigationPipMode()
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        isInPipModeState.value = isInPictureInPictureMode
+    }
+
+    fun enterNavigationPipMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+            if (!isPipPermissionAllowed()) {
+                openPipSystemSettings()
+                return
+            }
+
+            try {
+                val aspectRatio = Rational(3, 4)
+                val paramsBuilder = PictureInPictureParams.Builder()
+                    .setAspectRatio(aspectRatio)
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    paramsBuilder.setAutoEnterEnabled(true)
+                }
+
+                val params = paramsBuilder.build()
+                setPictureInPictureParams(params)
+                enterPictureInPictureMode(params)
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
     }
@@ -93,7 +200,11 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOfflineViewModel = viewModel()) {
+fun MainScreen(
+    viewModel: CannonViewModel = viewModel(),
+    offlineViewModel: MapOfflineViewModel = viewModel(),
+    isInPipMode: Boolean = false
+) {
     val context = LocalContext.current
 
     var destinationPoint by remember { mutableStateOf<Point?>(null) }
@@ -209,22 +320,34 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
         }
     }
 
-    val launcher = rememberLauncherForActivityResult(
+    val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        locationPermissionGranted = (permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true) ||
-                (permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true)
-        
+        val fineLocation = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
+        val coarseLocation = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
+        val hasLocation = fineLocation || coarseLocation || (
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        )
+
+        locationPermissionGranted = hasLocation
+
         if (locationPermissionGranted) {
             checkAndEnableGPS()
         }
     }
 
-    // طلب صلاحية الإشعارات لأندرويد 13+ لضمان ظهور شريط تحميل الخرائط
+    // طلب صلاحيات الموقع الجغرافي والإشعارات الموحدة عند فتح التطبيق
     LaunchedEffect(Unit) {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            launcher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+        val permissionsToRequest = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
         }
+
+        permissionLauncher.launch(permissionsToRequest.toTypedArray())
     }
 
     // إخفاء تلقائي لشريط البحث بعد 3 ثواني إذا ظهر وبقي فارغاً بدون كتابة
@@ -256,11 +379,12 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                         onSelectRoute = { offlineViewModel.selectRoute(it) },
                         destinationPoint = destinationPoint,
                         destinationLabel = searchQuery.ifBlank { "الوجهة المطلوبة" },
+                        isInPipMode = isInPipMode,
                         onEnableGps = {
                             if (locationPermissionGranted) {
                                 checkAndEnableGPS()
                             } else {
-                                launcher.launch(
+                                permissionLauncher.launch(
                                     arrayOf(
                                         Manifest.permission.ACCESS_FINE_LOCATION,
                                         Manifest.permission.ACCESS_COARSE_LOCATION
@@ -559,7 +683,7 @@ fun MainScreen(viewModel: CannonViewModel = viewModel(), offlineViewModel: MapOf
                             if (locationPermissionGranted) {
                                 checkAndEnableGPS()
                             } else {
-                                launcher.launch(
+                                permissionLauncher.launch(
                                     arrayOf(
                                         Manifest.permission.ACCESS_FINE_LOCATION,
                                         Manifest.permission.ACCESS_COARSE_LOCATION
