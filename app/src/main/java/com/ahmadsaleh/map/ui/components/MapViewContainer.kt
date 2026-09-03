@@ -251,7 +251,7 @@ fun MapViewContainer(
         if (locationPermissionGranted) {
             if (isNavLocked) {
                 lockNavigation()
-            } else {
+            } else if (destinationPoint == null) {
                 mapViewportState.transitionToFollowPuckState()
             }
         }

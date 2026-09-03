@@ -484,6 +484,12 @@ fun MainScreen(
                                                 val result = searchResults.first()
                                                 destinationPoint = result.point
                                                 offlineViewModel.onSearchQueryChanged(result.name)
+
+                                                // تحريك الكاميرا الفوري الخاطف والسريع جداً للموقع المختار بدون انيميشن
+                                                mapViewportState.setCameraOptions {
+                                                    center(result.point)
+                                                    zoom(16.0)
+                                                }
                                                 
                                                 val currentLoc = viewModel.getLastLocation()
                                                 val start = if (currentLoc != null) {
@@ -527,6 +533,12 @@ fun MainScreen(
                                                     onClick = {
                                                         destinationPoint = result.point
                                                         offlineViewModel.onSearchQueryChanged(result.name)
+
+                                                        // تحريك الكاميرا الفوري الخاطف والسريع جداً للموقع المختار بدون انيميشن
+                                                        mapViewportState.setCameraOptions {
+                                                            center(result.point)
+                                                            zoom(16.0)
+                                                        }
                                                         
                                                         val currentLoc = viewModel.getLastLocation()
                                                         val start = if (currentLoc != null) {
@@ -833,6 +845,7 @@ fun SpeedDialFab(
         PointType.CANNON -> Color.Green
         PointType.TARGET -> Color.Red
         PointType.REFERENCE -> Color.Blue
+        PointType.LOCATION -> Color(0xFF00E5FF)
         PointType.NONE -> silverColor
     }
 
@@ -1014,6 +1027,19 @@ fun SpeedDialFab(
                     },
                     onLongClick = {
                         viewModel.openManualAddDialog(PointType.REFERENCE)
+                        expanded = false
+                    }
+                )
+                SpeedDialItem(
+                    label = "موقع / وجهة",
+                    icon = Icons.Default.Place,
+                    color = Color(0xFF00E5FF),
+                    onClick = {
+                        viewModel.selectedPointType = PointType.LOCATION
+                        expanded = false
+                    },
+                    onLongClick = {
+                        viewModel.openManualAddDialog(PointType.LOCATION)
                         expanded = false
                     }
                 )

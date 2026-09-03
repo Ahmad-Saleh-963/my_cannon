@@ -405,6 +405,16 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
                 viewModelScope.launch { pointsRepository.saveReferencePoint(newRef) }
                 fetchAndApplyElevation(newRef.id, lat, lon, PointType.REFERENCE)
             }
+            PointType.LOCATION -> {
+                val index = targets.size + 1
+                val newLoc = TargetPosition(
+                    id = String.format(Locale.US, "loc_%d_%d", index, System.currentTimeMillis()),
+                    name = String.format(Locale.US, "موقع %d", index),
+                    geoPoint = geo, utmPoint = utm
+                )
+                viewModelScope.launch { pointsRepository.saveTarget(newLoc) }
+                fetchAndApplyElevation(newLoc.id, lat, lon, PointType.TARGET)
+            }
             else -> {}
         }
     }
@@ -570,6 +580,19 @@ class CannonViewModel(application: Application) : AndroidViewModel(application) 
                     )
                     viewModelScope.launch { pointsRepository.saveReferencePoint(newPoint) }
                     if (elevation == 0.0) fetchAndApplyElevation(newPoint.id, geo.latitude, geo.longitude, PointType.REFERENCE)
+                }
+                PointType.LOCATION -> {
+                    val locationName = name.ifBlank { "موقع ${targets.size + 1}" }
+                    val newPoint = TargetPosition(
+                        id = "loc_manual_${targets.size + 1}_${System.currentTimeMillis()}",
+                        name = locationName,
+                        description = description,
+                        elevation = elevation,
+                        geoPoint = geo.copy(altitude = elevation),
+                        utmPoint = utm
+                    )
+                    viewModelScope.launch { pointsRepository.saveTarget(newPoint) }
+                    if (elevation == 0.0) fetchAndApplyElevation(newPoint.id, geo.latitude, geo.longitude, PointType.TARGET)
                 }
                 else -> {}
             }

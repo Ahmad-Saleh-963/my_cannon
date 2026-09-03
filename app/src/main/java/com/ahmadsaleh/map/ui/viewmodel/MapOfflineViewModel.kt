@@ -325,6 +325,23 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
     private suspend fun searchOnlinePro(query: String, proximity: Point?): List<SearchResult> = coroutineScope {
         val encodedQuery = withContext(Dispatchers.IO) { java.net.URLEncoder.encode(query.trim(), "UTF-8") }
 
+        val customSavedDeferred = async(Dispatchers.IO) {
+            try {
+                AppDatabase.getInstance(getApplication()).targetDao().getAll()
+                    .filter { it.name.contains(query, ignoreCase = true) || it.description.contains(query, ignoreCase = true) }
+                    .map { entity ->
+                        SearchResult(
+                            name = "📍 ${entity.name}",
+                            fullAddress = entity.description.ifBlank { "موقع مخصص محفوظ" },
+                            province = extractSyrianProvince(entity.name + " " + entity.description),
+                            point = Point.fromLngLat(entity.longitude, entity.latitude)
+                        )
+                    }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+
         val localDbDeferred = async(Dispatchers.IO) {
             com.ahmadsaleh.map.data.db.SyriaLocationDatabase.search(query)
         }
@@ -469,7 +486,7 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
             list
         }
 
-        val combinedResults = localDbDeferred.await() + nominatimDeferred.await() + photonDeferred.await() + mapboxDeferred.await()
+        val combinedResults = customSavedDeferred.await() + localDbDeferred.await() + nominatimDeferred.await() + photonDeferred.await() + mapboxDeferred.await()
         deduplicateResults(combinedResults).take(30)
     }
 
@@ -536,17 +553,38 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    private fun searchOfflinePro(query: String): List<SearchResult> {
+    private suspend fun searchOfflinePro(query: String): List<SearchResult> = withContext(Dispatchers.IO) {
         val syriaDbResults = com.ahmadsaleh.map.data.db.SyriaLocationDatabase.search(query)
         val poiResults = _poiList.value.values.flatten()
             .filter { it.first.contains(query, ignoreCase = true) }
             .map { SearchResult(it.first, "نقطة تكتيكية مخزنة", "سوريا", it.second) }
 
-        return (syriaDbResults + poiResults).distinctBy { Pair(it.name, it.province) }
+        val customSavedPoints = try {
+            AppDatabase.getInstance(getApplication()).targetDao().getAll()
+                .filter { it.name.contains(query, ignoreCase = true) || it.description.contains(query, ignoreCase = true) }
+                .map { entity ->
+                    SearchResult(
+                        name = "📍 ${entity.name}",
+                        fullAddress = entity.description.ifBlank { "موقع مخصص محفوظ" },
+                        province = extractSyrianProvince(entity.name + " " + entity.description),
+                        point = Point.fromLngLat(entity.longitude, entity.latitude)
+                    )
+                }
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        deduplicateResults(customSavedPoints + syriaDbResults + poiResults)
     }
 
     private val cachedRouteDao by lazy {
         AppDatabase.getInstance(getApplication()).cachedRouteDao()
+    }
+
+    private fun isValidRoadPolyline(lineString: LineString): Boolean {
+        val coords = lineString.coordinates()
+        // الطرق الحقيقية المحسوبة من الملاحة تحتوي على العديد من النقاط المنحنية (5 نقاط على الأقل)
+        return coords.size >= 5
     }
 
     fun calculateDrivingRoute(start: Point, destination: Point) {
@@ -564,8 +602,12 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
             val allCached = cachedRouteDao.getAllCachedRoutes()
             val matchedRoutes = SmartRouteMatcher.findMatchingRoutes(start, destination, allCached)
 
-            if (matchedRoutes.isNotEmpty()) {
-                _currentRoutes.value = matchedRoutes
+            // تصفية الطرق الحقيقية فقط المكونة من مسارات حقيقية مع منحنيات الشوارع
+            val validRealRoads = matchedRoutes.filter { isValidRoadPolyline(it.geometry) }
+
+            if (validRealRoads.isNotEmpty()) {
+                // أخذ الطريق الرئيسي الأوحد الموثوق أوفلاين لمنع الخطوط التخمينية الخاطئة
+                _currentRoutes.value = listOf(validRealRoads.first())
                 _selectedRouteIndex.value = 0
                 return@withContext
             }
@@ -573,14 +615,14 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
             e.printStackTrace()
         }
 
-        // في حال عدم توفر اتصال بالإنترنت أو عدم توفر بيانات مسار مسبقة، لا يتم رسم أي خط تجريدي نهائياً
+        // في حال عدم توفر مسار حقيقي أوفلاين، لا يتم رسم أي خط مستقيم نهائياً
         _currentRoutes.value = emptyList()
         _selectedRouteIndex.value = 0
 
         withContext(Dispatchers.Main) {
             android.widget.Toast.makeText(
                 getApplication(),
-                "لا يتوفر اتصال بالإنترنت أو بيانات مسبقة عن هذا المسار لعرضه أوفلاين",
+                "لا يتوفر مسار طرقات حقيقي مخزن أوفلاين لهذا الموقع، يرجى الاتصال بالشبكة لحسابه",
                 android.widget.Toast.LENGTH_LONG
             ).show()
         }
@@ -628,7 +670,8 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
                 routesList.add(RouteInfo(geometry, duration, distance, summary))
             }
 
-            _currentRoutes.value = routesList
+            val validRoutes = routesList.filter { isValidRoadPolyline(it.geometry) }
+            _currentRoutes.value = if (validRoutes.isNotEmpty()) validRoutes else routesList
             _selectedRouteIndex.value = 0
 
             // حفظ وتحديث جميع المسارات المحسوبة أونلاين تلقائياً في قاعدة البيانات المحلية

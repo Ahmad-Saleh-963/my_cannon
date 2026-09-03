@@ -67,15 +67,18 @@ object SmartRouteMatcher {
             }
 
             // 2. التحقق من صحة المطابقة:
-            // - البداية والنهاية تقعان بالقرب من الخط المخزن (ضمن مسافة مقبولة < 8 كم)
+            // - البداية والنهاية تقعان بالقرب الشديد من الطريق الفعلي المخزن (أقل من 1.5 كم)
             // - ترتيب نقطة البداية يأتي قبل نقطة النهاية اتجاهياً (startIdx < destIdx)
-            if (startIdx != -1 && destIdx != -1 && startIdx < destIdx && minStartDist < 8.0 && minDestDist < 8.0) {
+            // - عدد نقاط الطريق يضمن وجود منحنيات وشوارع حقيقية (destIdx - startIdx >= 3)
+            if (startIdx != -1 && destIdx != -1 && startIdx < destIdx && (destIdx - startIdx) >= 3 && minStartDist < 1.5 && minDestDist < 1.5) {
                 val rawSubList = coordinates.subList(startIdx, destIdx + 1)
                 
                 val subPoints = mutableListOf<Point>()
-                subPoints.add(start)
+                if (minStartDist > 0.05) subPoints.add(start)
                 subPoints.addAll(rawSubList)
-                subPoints.add(destination)
+                if (minDestDist > 0.05) subPoints.add(destination)
+
+                if (subPoints.size < 4) continue
 
                 // حساب المسافة الكلية للقطاع الفرعي المستخرج
                 var subDistanceKm = 0.0
@@ -88,12 +91,12 @@ object SmartRouteMatcher {
                     subDistanceKm += results[0].toDouble() / 1000.0
                 }
 
-                if (subDistanceKm <= 0.01) continue
+                if (subDistanceKm <= 0.05) continue
 
-                val subDurationMin = ((subDistanceKm / 50.0) * 60.0).roundToInt().coerceAtLeast(1)
+                val subDurationMin = ((subDistanceKm / 45.0) * 60.0).roundToInt().coerceAtLeast(1)
                 val subGeometry = LineString.fromLngLats(subPoints)
 
-                val summaryTag = if (entity.summary.isNotBlank()) "مسار مخزن (${entity.summary})" else "مسار محلي أوفلاين"
+                val summaryTag = if (entity.summary.isNotBlank() && !entity.summary.startsWith("طريق بديل")) entity.summary else "مسار موثوق"
 
                 matchedRoutes.add(
                     RouteInfo(
