@@ -489,11 +489,14 @@ fun MainScreen(
                                                 destinationPoint = result.point
                                                 offlineViewModel.onSearchQueryChanged(result.name)
 
-                                                // تحريك الكاميرا الفوري الخاطف والسريع جداً للموقع المختار بدون انيميشن
+                                                // 1. القفز الخاطف الفوري للكاميرا للموقع المختار
                                                 mapViewportState.setCameraOptions {
                                                     center(result.point)
                                                     zoom(16.0)
                                                 }
+
+                                                // 2. حفظ الموقع المبحوث عنه في قاعدة البيانات للوصول إليه أوفلاين
+                                                offlineViewModel.saveSearchedLocationToDb(result)
                                                 
                                                 val currentLoc = viewModel.getLastLocation()
                                                 val start = if (currentLoc != null) {
@@ -538,11 +541,14 @@ fun MainScreen(
                                                         destinationPoint = result.point
                                                         offlineViewModel.onSearchQueryChanged(result.name)
 
-                                                        // تحريك الكاميرا الفوري الخاطف والسريع جداً للموقع المختار بدون انيميشن
+                                                        // 1. القفز الخاطف الفوري للكاميرا للموقع المختار
                                                         mapViewportState.setCameraOptions {
                                                             center(result.point)
                                                             zoom(16.0)
                                                         }
+
+                                                        // 2. حفظ الموقع المبحوث عنه في قاعدة البيانات للوصول إليه أوفلاين
+                                                        offlineViewModel.saveSearchedLocationToDb(result)
                                                         
                                                         val currentLoc = viewModel.getLastLocation()
                                                         val start = if (currentLoc != null) {

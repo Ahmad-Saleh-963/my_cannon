@@ -634,6 +634,35 @@ class MapOfflineViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun saveSearchedLocationToDb(result: SearchResult) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val targetDao = AppDatabase.getInstance(getApplication()).targetDao()
+                val cleanName = result.name.replace(Regex("[📍🔄🌳🛣️🏡]"), "").trim()
+                val utm = com.ahmadsaleh.map.domain.calculator.UtmConverter.fromGeoToUtm(
+                    com.ahmadsaleh.map.data.model.GeoPoint(result.point.latitude(), result.point.longitude())
+                )
+                val entity = com.ahmadsaleh.map.data.db.entity.TargetEntity(
+                    id = "searched_${cleanName.hashCode()}_${result.point.latitude().toString().take(6)}",
+                    name = cleanName,
+                    description = result.fullAddress,
+                    elevation = 0.0,
+                    latitude = result.point.latitude(),
+                    longitude = result.point.longitude(),
+                    altitude = 0.0,
+                    utmEasting = utm.easting,
+                    utmNorthing = utm.northing,
+                    utmZoneNumber = utm.zoneNumber,
+                    utmZoneLetter = utm.zoneLetter.toString(),
+                    sortOrder = System.currentTimeMillis()
+                )
+                targetDao.upsert(entity)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     private suspend fun fetchOnlineRoutes(start: Point, destination: Point) = withContext(Dispatchers.IO) {
         try {
             val token = getApplication<Application>().getString(R.string.mapbox_access_token)
