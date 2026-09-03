@@ -405,7 +405,7 @@ fun MapViewContainer(
                 if (!isInPipMode) {
                     Compass(
                         alignment = Alignment.TopStart,
-                        contentPadding = PaddingValues(top = 48.dp, start = 16.dp),
+                        contentPadding = PaddingValues(top = 22.dp, start = 16.dp),
                         fadeWhenFacingNorth = false
                     )
                 }
@@ -797,7 +797,7 @@ fun MapViewContainer(
                 Column(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(top = 48.dp, end = 16.dp),
+                        .padding(top = 16.dp, end = 16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     // 1. زر تتبع القيادة وقفل الملاحة
@@ -809,8 +809,8 @@ fun MapViewContainer(
                                 onClearRoute()
                             }
                         },
-                        modifier = Modifier.size(44.dp),
-                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.size(42.dp),
+                        shape = RoundedCornerShape(12.dp),
                         color = if (isNavLocked) Color(0xFF0A84FF) else Color(0xFF0D131D).copy(alpha = 0.85f),
                         border = BorderStroke(
                             1.5.dp,

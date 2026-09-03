@@ -29,6 +29,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
@@ -221,14 +223,6 @@ fun MainScreen(
     
     val keyboardController = LocalSoftwareKeyboardController.current
 
-    // مؤقت لإخفاء شريط البحث تلقائياً
-    LaunchedEffect(isSearchBarVisible) {
-        if (isSearchBarVisible) {
-            delay(5.seconds)
-            if (searchQuery.isEmpty()) isSearchBarVisible = false
-        }
-    }
-
     var selectedTab by remember { mutableIntStateOf(0) }
     
     // حالة ظهور شريط التنقل
@@ -252,9 +246,15 @@ fun MainScreen(
         )
     }
 
-    // التعامل مع زر الرجوع في النظام لمنع إغلاق التطبيق فجأة
-    BackHandler(enabled = selectedTab != 0) {
-        selectedTab = 0
+    var showExitConfirmationDialog by remember { mutableStateOf(false) }
+
+    // التعامل مع زر الرجوع في النظام لمنع إغلاق التطبيق فجأة وحمايته بحوار تأكيد
+    BackHandler(enabled = true) {
+        if (selectedTab != 0) {
+            selectedTab = 0
+        } else {
+            showExitConfirmationDialog = true
+        }
     }
 
     val initialLoc = remember { viewModel.getLastLocation() }
@@ -351,14 +351,6 @@ fun MainScreen(
         permissionLauncher.launch(permissionsToRequest.toTypedArray())
     }
 
-    // إخفاء تلقائي لشريط البحث بعد 3 ثواني إذا ظهر وبقي فارغاً بدون كتابة
-    LaunchedEffect(isSearchBarVisible, searchQuery) {
-        if (isSearchBarVisible && searchQuery.isEmpty()) {
-            delay(3.seconds)
-            isSearchBarVisible = false
-        }
-    }
-
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
@@ -423,64 +415,39 @@ fun MainScreen(
                         visible = !isInPipMode && isSearchBarVisible,
                         enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
                         exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
-                        modifier = Modifier.align(Alignment.TopCenter)
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .safeDrawingPadding()
                     ) {
                         Column(
                             modifier = Modifier
-                                .fillMaxWidth(0.88f)
-                                .padding(top = 44.dp),
+                                .fillMaxWidth()
+                                .padding(top = 15.dp, start = 68.dp, end = 68.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Surface(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(48.dp),
-                                shape = RoundedCornerShape(24.dp),
+                                    .height(42.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 color = Color(0xFF090D16).copy(alpha = 0.90f),
                                 border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f)),
-                                tonalElevation = 8.dp,
-                                shadowElevation = 8.dp
+                                tonalElevation = 6.dp,
+                                shadowElevation = 6.dp
                             ) {
-                                TextField(
+                                BasicTextField(
                                     value = searchQuery,
                                     onValueChange = { it ->
                                         val currentPoint = viewModel.getLastLocation()?.let { Point.fromLngLat(it.second, it.first) }
                                         offlineViewModel.onSearchQueryChanged(it, currentPoint)
                                     },
-                                    placeholder = { Text("بحث عن منطقة...", color = Color.Gray, fontSize = 12.5.sp) },
                                     singleLine = true,
-                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White),
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = TextFieldDefaults.colors(
-                                        focusedContainerColor = Color.Transparent,
-                                        unfocusedContainerColor = Color.Transparent,
-                                        focusedIndicatorColor = Color.Transparent,
-                                        unfocusedIndicatorColor = Color.Transparent,
-                                        focusedTextColor = Color.White,
-                                        unfocusedTextColor = Color.White,
-                                        cursorColor = Color(0xFF00E5FF)
+                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color.White
                                     ),
-                                    leadingIcon = { 
-                                        if (isSearching) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(18.dp),
-                                                strokeWidth = 2.dp,
-                                                color = Color.Cyan
-                                            )
-                                        } else {
-                                            Icon(Icons.Default.Search, contentDescription = null, tint = Color.Cyan, modifier = Modifier.size(20.dp))
-                                        }
-                                    },
-                                    trailingIcon = {
-                                        if (searchQuery.isNotEmpty()) {
-                                            IconButton(
-                                                onClick = { offlineViewModel.onSearchQueryChanged("") },
-                                                modifier = Modifier.size(24.dp)
-                                            ) {
-                                                Icon(Icons.Default.Close, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
-                                            }
-                                        }
-                                    },
+                                    cursorBrush = SolidColor(Color(0xFF00E5FF)),
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                                     keyboardActions = KeyboardActions(
                                         onSearch = {
@@ -512,7 +479,48 @@ fun MainScreen(
                                                 isSearchBarVisible = false
                                             }
                                         }
-                                    )
+                                    ),
+                                    modifier = Modifier.fillMaxSize(),
+                                    decorationBox = { innerTextField ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(horizontal = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            if (isSearching) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(18.dp),
+                                                    strokeWidth = 2.dp,
+                                                    color = Color.Cyan
+                                                )
+                                            } else {
+                                                Icon(Icons.Default.Search, contentDescription = null, tint = Color.Cyan, modifier = Modifier.size(20.dp))
+                                            }
+                                            
+                                            Spacer(Modifier.width(8.dp))
+                                            
+                                            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                                if (searchQuery.isEmpty()) {
+                                                    Text("بحث عن منطقة...", color = Color.Gray, fontSize = 12.5.sp)
+                                                }
+                                                innerTextField()
+                                            }
+                                            
+                                            IconButton(
+                                                onClick = {
+                                                    if (searchQuery.isNotEmpty()) {
+                                                        offlineViewModel.onSearchQueryChanged("")
+                                                    } else {
+                                                        isSearchBarVisible = false
+                                                    }
+                                                },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(Icons.Default.Close, contentDescription = "إغلاق", tint = Color.Gray, modifier = Modifier.size(16.dp))
+                                            }
+                                        }
+                                    }
                                 )
                             }
 
@@ -624,78 +632,6 @@ fun MainScreen(
                 }
             }
 
-            if (!isInPipMode) {
-                // منطقة حساسة للسحب في الأسفل فقط
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(60.dp) // ارتفاع كافٍ لاستشعار السحب من الأسفل
-                        .align(Alignment.BottomCenter)
-                        .pointerInput(Unit) {
-                            detectVerticalDragGestures { _, dragAmount ->
-                                if (dragAmount < -10) { // سحب للأعلى حصراً
-                                    isBottomBarVisible = true
-                                }
-                            }
-                        }
-                )
-            }
-
-            // شريط التنقل العائم والمتحرك
-            AnimatedVisibility(
-                visible = !isInPipMode && isBottomBarVisible && selectedTab != 3,
-                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-                modifier = Modifier.align(Alignment.BottomCenter)
-            ) {
-                Surface(
-                    modifier = Modifier
-                        .padding(horizontal = 32.dp, vertical = 16.dp) // جعل الشريط يبدو ككبسولة طافية
-                        .height(52.dp)
-                        .fillMaxWidth(),
-                    shape = RoundedCornerShape(26.dp),
-                    color = Color.Black.copy(alpha = 0.8f),
-                    tonalElevation = 8.dp
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        val items = listOf(
-                            Triple(0, Icons.Default.Map, "خريطة"),
-                            Triple(1, Icons.Default.Calculate, "حساب"),
-                            Triple(2, Icons.Default.Timeline, "تكتيك"),
-                            Triple(3, Icons.Default.SportsEsports, "محاكي")
-                        )
-
-                        items.forEach { (index, icon, _) ->
-                            val isSelected = selectedTab == index
-                            IconButton(
-                                onClick = { 
-                                    selectedTab = index
-                                    isBottomBarVisible = false // إخفاء بعد الاختيار
-                                }
-                            ) {
-                                Icon(
-                                    icon,
-                                    contentDescription = null,
-                                    tint = if (isSelected) {
-                                        when(index) {
-                                            0 -> Color.Green
-                                            1 -> Color.Red
-                                            2 -> Color.Blue
-                                            else -> Color.Cyan
-                                        }
-                                    } else Color.White.copy(alpha = 0.5f),
-                                    modifier = Modifier.size(if (isSelected) 28.dp else 24.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
             // أزرار الخريطة والتحكم - استخدام safeDrawingPadding لضمان عدم التداخل مع النظام
             Box(
                 modifier = Modifier
@@ -751,6 +687,68 @@ fun MainScreen(
                     )
                 }
             }
+        }
+
+        if (showExitConfirmationDialog) {
+            AlertDialog(
+                onDismissRequest = { showExitConfirmationDialog = false },
+                icon = {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFFFF9500).copy(alpha = 0.15f),
+                        modifier = Modifier.size(52.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.PowerSettingsNew,
+                                contentDescription = null,
+                                tint = Color(0xFFFF9500),
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    }
+                },
+                title = {
+                    Text(
+                        text = "تأكيد الخروج من التطبيق",
+                        fontWeight = FontWeight.ExtraBold,
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                },
+                text = {
+                    Text(
+                        text = "هل أنت متأكد من رغبتك في إغلاق وتأكيد الخروج من تطبيق الملاحة والخرائط؟",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showExitConfirmationDialog = false
+                            (context as? Activity)?.finish()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFFF3B30),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.ExitToApp, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("إغلاق وخروج", fontWeight = FontWeight.ExtraBold)
+                    }
+                },
+                dismissButton = {
+                    OutlinedButton(
+                        onClick = { showExitConfirmationDialog = false },
+                        modifier = Modifier.padding(start = 14.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("إلغاء      ")
+                    }
+                }
+            )
         }
 
         if (viewModel.showEditDialog) {
@@ -991,7 +989,7 @@ fun SpeedDialFab(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // وضع الاستطلاع (لا شيء) - أعلى القائمة
+                // 1. وضع الاستطلاع (لا شيء)
                 SpeedDialItem(
                     label = "استطلاع (لا شيء)",
                     icon = Icons.Default.Explore,
@@ -1001,45 +999,7 @@ fun SpeedDialFab(
                         expanded = false
                     }
                 )
-                SpeedDialItem(
-                    label = "المربط",
-                    icon = Icons.Default.GpsFixed,
-                    color = Color.Green,
-                    onClick = {
-                        viewModel.selectedPointType = PointType.CANNON
-                        expanded = false
-                    },
-                    onLongClick = {
-                        viewModel.openManualAddDialog(PointType.CANNON)
-                        expanded = false
-                    }
-                )
-                SpeedDialItem(
-                    label = "الهدف",
-                    icon = Icons.Default.TrackChanges,
-                    color = Color.Red,
-                    onClick = {
-                        viewModel.selectedPointType = PointType.TARGET
-                        expanded = false
-                    },
-                    onLongClick = {
-                        viewModel.openManualAddDialog(PointType.TARGET)
-                        expanded = false
-                    }
-                )
-                SpeedDialItem(
-                    label = "نقطة علام",
-                    icon = Icons.Default.Flag,
-                    color = Color.Blue,
-                    onClick = {
-                        viewModel.selectedPointType = PointType.REFERENCE
-                        expanded = false
-                    },
-                    onLongClick = {
-                        viewModel.openManualAddDialog(PointType.REFERENCE)
-                        expanded = false
-                    }
-                )
+                // 2. موقع / وجهة
                 SpeedDialItem(
                     label = "موقع / وجهة",
                     icon = Icons.Default.Place,
@@ -1053,6 +1013,7 @@ fun SpeedDialFab(
                         expanded = false
                     }
                 )
+                // 3. الإعدادات
                 SpeedDialItem(
                     label = "الإعدادات",
                     icon = Icons.Default.Settings,
